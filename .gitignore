@@ -1,0 +1,10 @@
+credentials.json
+usuarios_registrados.json
+*.xlsx
+*.pyc
+__pycache__/
+.DS_Store
+arreglar_sheet.py
+cargar_stock_inicial.py
+scratch*.py
+contexto.md
