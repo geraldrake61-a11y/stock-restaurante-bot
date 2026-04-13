@@ -14,14 +14,15 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ─── ESTADOS ──────────────────────────────────────────────────────────────────
-REGISTRO_NOMBRE = 0
+REGISTRO_NOMBRE  = 0
 ELEGIR_PRODUCTO  = 1
-INGRESAR_CANTIDAD = 2
+INGRESAR_CANTIDAD= 2
 CONFIRMAR        = 3
 JEFA_MENU        = 4
 JEFA_CONSULTA    = 5
+VER_STOCK        = 6
 
-# ─── ARCHIVO LOCAL DE USUARIOS REGISTRADOS ────────────────────────────────────
+# ─── ARCHIVO LOCAL ─────────────────────────────────────────────────────────────
 USUARIOS_FILE = "usuarios_registrados.json"
 
 def cargar_usuarios() -> dict:
@@ -30,28 +31,66 @@ def cargar_usuarios() -> dict:
             return json.load(f)
     return {}
 
-def guardar_usuario(user_id: str, nombre: str, rol: str):
+def guardar_usuario(user_id: str, nombre: str, rol: str, sede: str = None):
     usuarios = cargar_usuarios()
-    usuarios[user_id] = {"nombre": nombre, "rol": rol}
+    usuarios[str(user_id)] = {"nombre": nombre, "rol": rol, "sede": sede}
     with open(USUARIOS_FILE, "w", encoding="utf-8") as f:
         json.dump(usuarios, f, ensure_ascii=False, indent=2)
-    logger.info(f"Usuario registrado: {nombre} (ID: {user_id})")
 
 def buscar_usuario(user_id: str) -> dict | None:
     return cargar_usuarios().get(str(user_id))
 
-# ─── NOMBRES DISPONIBLES ──────────────────────────────────────────────────────
-NOMBRES_TRABAJADORES = ["Milagros", "Ruth", "Miguel", "Josué", "Mozo 1"]
+# ─── CONFIGURACIÓN DE SEDES ───────────────────────────────────────────────────
 NOMBRE_JEFA = "Adriana"
 
-# ─── PRODUCTOS POR PERSONA ────────────────────────────────────────────────────
+NOMBRES_UMACOLLO = ["Milagros", "Ruth", "Miguel", "Josué", "Mozo 1"]
+NOMBRES_EU       = ["Carlos", "Flor", "Danitza", "María Vargas",
+                    "Brendali", "Jimena", "Sebastian", "Ivan", "Lionel"]
+NOMBRES_TRABAJADORES = NOMBRES_UMACOLLO + NOMBRES_EU
+
+SEDE_POR_NOMBRE = {n: "Umacollo" for n in NOMBRES_UMACOLLO}
+SEDE_POR_NOMBRE.update({n: "Av. Estados Unidos" for n in NOMBRES_EU})
+
+SHEET_ID_UMACOLLO = os.environ.get("GOOGLE_SHEET_ID", "")
+SHEET_ID_EU       = os.environ.get("GOOGLE_SHEET_ID_EU", "")
+
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+]
+
+# ─── DEEP LINK MAP ────────────────────────────────────────────────────────────
+DEEP_LINK_MAP = {
+    # Umacollo
+    "milagros":    ("Milagros",     "trabajador", "Umacollo"),
+    "ruth":        ("Ruth",         "trabajador", "Umacollo"),
+    "miguel":      ("Miguel",       "trabajador", "Umacollo"),
+    "josue":       ("Josué",        "trabajador", "Umacollo"),
+    "josué":       ("Josué",        "trabajador", "Umacollo"),
+    "mozo":        ("Mozo 1",       "trabajador", "Umacollo"),
+    # Av. Estados Unidos
+    "carlos":      ("Carlos",       "trabajador", "Av. Estados Unidos"),
+    "flor":        ("Flor",         "trabajador", "Av. Estados Unidos"),
+    "danitza":     ("Danitza",      "trabajador", "Av. Estados Unidos"),
+    "mariavargas": ("María Vargas", "trabajador", "Av. Estados Unidos"),
+    "brendali":    ("Brendali",     "trabajador", "Av. Estados Unidos"),
+    "jimena":      ("Jimena",       "trabajador", "Av. Estados Unidos"),
+    "sebastian":   ("Sebastian",    "trabajador", "Av. Estados Unidos"),
+    "ivan":        ("Ivan",         "trabajador", "Av. Estados Unidos"),
+    "lionel":      ("Lionel",       "trabajador", "Av. Estados Unidos"),
+    # Jefa
+    "adriana":     ("Adriana",      "jefa",       None),
+}
+
+# ─── PRODUCTOS ────────────────────────────────────────────────────────────────
 PRODUCTOS = {
+    # ── UMACOLLO ──────────────────────────────────────────────────────────────
     "Milagros": [
         {"nombre": "Papa",               "unidad": "costales",      "distribuidor": "Acomare"},
         {"nombre": "Zanahoria",          "unidad": "kg",            "distribuidor": "Acomare"},
         {"nombre": "Kion",               "unidad": "kg",            "distribuidor": "Acomare"},
         {"nombre": "Rocoto",             "unidad": "kg",            "distribuidor": "Acomare"},
-        {"nombre": "Ají limo",           "unidad": "kg",            "distribuidor": "Acomare"},
+        {"nombre": "Ají limo",           "unidad": "gramos",        "distribuidor": "Acomare"},
         {"nombre": "Limón",              "unidad": "cajas",         "distribuidor": "Acomare"},
         {"nombre": "Huevos",             "unidad": "planchas",      "distribuidor": "Acomare"},
         {"nombre": "Maracuyá",           "unidad": "kg",            "distribuidor": "Acomare"},
@@ -68,11 +107,30 @@ PRODUCTOS = {
         {"nombre": "Pollos cierre",      "unidad": "unidades",      "distribuidor": "Avelino"},
         {"nombre": "Cerdo",              "unidad": "kg",            "distribuidor": "Avelino"},
         {"nombre": "Concho",             "unidad": "kg",            "distribuidor": "Avelino"},
-        {"nombre": "Fórmula de caldo",   "unidad": "kg",            "distribuidor": "Avelino"},
         {"nombre": "Fideo",              "unidad": "kg",            "distribuidor": "Alicorp / Makro"},
         {"nombre": "Sal",                "unidad": "kg",            "distribuidor": "Alicorp"},
-        {"nombre": "Café",               "unidad": "sobres",        "distribuidor": "Mercado Incas / Makro"},
-        {"nombre": "Azúcar",             "unidad": "kg",            "distribuidor": "Mercado Incas / Makro"},
+        {"nombre": "Ajinomoto",          "unidad": "kg",            "distribuidor": "Makro"},
+        {"nombre": "Mallas",             "unidad": "paquetes x50",  "distribuidor": "Aldair / Motta"},
+    ],
+    "Ruth": [
+        {"nombre": "Grapas",             "unidad": "cajas",         "distribuidor": "Aldair / Motta"},
+        {"nombre": "Mondadientes",       "unidad": "paquetes",      "distribuidor": "Aldair / Motta"},
+        {"nombre": "Trapos de mesa",     "unidad": "unidades",      "distribuidor": "Makro"},
+        {"nombre": "Poet",               "unidad": "unidades",      "distribuidor": "Makro"},
+        {"nombre": "Cloro",              "unidad": "unidades",      "distribuidor": "Makro"},
+        {"nombre": "Rollos impresora",   "unidad": "unidades",      "distribuidor": "Tienda cerca sede"},
+        {"nombre": "Cartas",             "unidad": "unidades",      "distribuidor": "El Centro"},
+    ],
+    "Miguel": [
+        {"nombre": "Aceite",             "unidad": "litros",        "distribuidor": "Alicorp"},
+        {"nombre": "Mantequilla",        "unidad": "kg",            "distribuidor": "Makro"},
+        {"nombre": "Masa de yucas",      "unidad": "kg",            "distribuidor": "Avelino"},
+        {"nombre": "Pan rústico",        "unidad": "unidades",      "distribuidor": "Mercado Incas"},
+        {"nombre": "Bolsas cubiertos",   "unidad": "paquetes x200", "distribuidor": "Aldair / Motta"},
+        {"nombre": "Bolsas Rappi",       "unidad": "paquetes x500", "distribuidor": "Aldair / Motta"},
+        {"nombre": "Cucharas plástico",  "unidad": "paquetes x50",  "distribuidor": "Aldair / Motta"},
+        {"nombre": "Bolsas chismosas 19","unidad": "paquetes x100", "distribuidor": "Aldair / Motta"},
+        {"nombre": "Bolsas tupper",      "unidad": "rollos",        "distribuidor": "Aldair / Motta"},
         {"nombre": "Inf. Té",            "unidad": "cajas",         "distribuidor": "Mercado Incas / Makro"},
         {"nombre": "Inf. Anís",          "unidad": "cajas",         "distribuidor": "Mercado Incas / Makro"},
         {"nombre": "Inf. Cedrón",        "unidad": "cajas",         "distribuidor": "Mercado Incas / Makro"},
@@ -80,45 +138,13 @@ PRODUCTOS = {
         {"nombre": "Inf. Flor Jamaica",  "unidad": "cajas",         "distribuidor": "Mercado Incas / Makro"},
         {"nombre": "Inf. Boldo",         "unidad": "cajas",         "distribuidor": "Mercado Incas / Makro"},
         {"nombre": "Guantes blancos M",  "unidad": "cajas",         "distribuidor": "Aldair / Motta"},
-        {"nombre": "Mallas",             "unidad": "paquetes x50",  "distribuidor": "Aldair / Motta"},
-    ],
-    "Ruth": [
-        {"nombre": "Coca-Cola",          "unidad": "unidades",      "distribuidor": "Coca-Cola"},
-        {"nombre": "Inca-Cola",          "unidad": "unidades",      "distribuidor": "Coca-Cola"},
-        {"nombre": "Fanta",              "unidad": "unidades",      "distribuidor": "Coca-Cola"},
-        {"nombre": "Sprite",             "unidad": "unidades",      "distribuidor": "Coca-Cola"},
-        {"nombre": "Agua San Luis",      "unidad": "unidades",      "distribuidor": "Coca-Cola"},
-        {"nombre": "Agua Cielo",         "unidad": "unidades",      "distribuidor": "Coca-Cola"},
-        {"nombre": "Pepsi",              "unidad": "unidades",      "distribuidor": "El Centro"},
-        {"nombre": "Kola escocesa",      "unidad": "unidades",      "distribuidor": "El Centro"},
-        {"nombre": "Emoliente",          "unidad": "porciones",     "distribuidor": "El Centro"},
-        {"nombre": "Chicha de jora",     "unidad": "litros",        "distribuidor": "Avelino"},
-        {"nombre": "Aceite",             "unidad": "litros",        "distribuidor": "Alicorp"},
-        {"nombre": "Mantequilla",        "unidad": "kg",            "distribuidor": "Makro"},
-        {"nombre": "Masa de yucas",      "unidad": "kg",            "distribuidor": "Avelino"},
-        {"nombre": "Pan rústico",        "unidad": "unidades",      "distribuidor": "Mercado Incas"},
-        {"nombre": "Tissues",            "unidad": "paquetes x10",  "distribuidor": "Makro"},
-        {"nombre": "Bolsas cubiertos",   "unidad": "paquetes x200", "distribuidor": "Aldair / Motta"},
-        {"nombre": "Bolsas Rappi",       "unidad": "paquetes x500", "distribuidor": "Aldair / Motta"},
-        {"nombre": "Cucharas plástico",  "unidad": "paquetes x50",  "distribuidor": "Aldair / Motta"},
-        {"nombre": "Bolsas chismosas 19","unidad": "paquetes x100", "distribuidor": "Aldair / Motta"},
-        {"nombre": "Bolsas tupper",      "unidad": "rollos",        "distribuidor": "Aldair / Motta"},
-    ],
-    "Miguel": [
-        {"nombre": "Guantes negros M",   "unidad": "cajas",         "distribuidor": "Aldair / Motta"},
-        {"nombre": "Tocas",              "unidad": "cajas",         "distribuidor": "Aldair / Motta"},
-        {"nombre": "Grapas",             "unidad": "cajas",         "distribuidor": "Aldair / Motta"},
-        {"nombre": "Mondadientes",       "unidad": "paquetes",      "distribuidor": "Aldair / Motta"},
-        {"nombre": "Trapos de mesa",     "unidad": "unidades",      "distribuidor": "Makro"},
-        {"nombre": "Poet",               "unidad": "unidades",      "distribuidor": "Makro"},
-        {"nombre": "Cloro",              "unidad": "unidades",      "distribuidor": "Makro"},
-        {"nombre": "Canchita",           "unidad": "kg",            "distribuidor": "Makro"},
+        {"nombre": "Café",               "unidad": "gramos",        "distribuidor": "Mercado Incas / Makro"},
+        {"nombre": "Azúcar",             "unidad": "kg",            "distribuidor": "Mercado Incas / Makro"},
         {"nombre": "Harina",             "unidad": "kg",            "distribuidor": "Makro"},
         {"nombre": "Polvo de hornear",   "unidad": "unidades",      "distribuidor": "Makro"},
-        {"nombre": "Ajinomoto",          "unidad": "bolsas",        "distribuidor": "Makro"},
-        {"nombre": "Rollos impresora",   "unidad": "unidades",      "distribuidor": "Tienda cerca sede"},
     ],
     "Josué": [
+        {"nombre": "Fórmula de caldo",        "unidad": "kg",            "distribuidor": "Avelino"},
         {"nombre": "Tuppers litro",           "unidad": "paquetes x25",  "distribuidor": "Aldair / Motta"},
         {"nombre": "Tuppers medio litro",     "unidad": "paquetes x25",  "distribuidor": "Aldair / Motta"},
         {"nombre": "Tuppers anisado",         "unidad": "paquetes x100", "distribuidor": "Aldair / Motta"},
@@ -128,11 +154,135 @@ PRODUCTOS = {
         {"nombre": "Bolsitas toppings grandes","unidad": "paquetes x100","distribuidor": "Aldair / Motta"},
     ],
     "Mozo 1": [
-        {"nombre": "Pendiente de asignar", "unidad": "—", "distribuidor": "—"},
+        {"nombre": "Canchita",           "unidad": "kg",            "distribuidor": "Makro"},
+        {"nombre": "Coca-Cola",          "unidad": "unidades",      "distribuidor": "Coca-Cola"},
+        {"nombre": "Inca-Cola",          "unidad": "unidades",      "distribuidor": "Coca-Cola"},
+        {"nombre": "Fanta",              "unidad": "unidades",      "distribuidor": "Coca-Cola"},
+        {"nombre": "Sprite",             "unidad": "unidades",      "distribuidor": "Coca-Cola"},
+        {"nombre": "Agua San Luis",      "unidad": "unidades",      "distribuidor": "Coca-Cola"},
+        {"nombre": "Agua Cielo",         "unidad": "unidades",      "distribuidor": "Coca-Cola"},
+        {"nombre": "Pepsi",              "unidad": "unidades",      "distribuidor": "El Centro"},
+        {"nombre": "Kola escocesa",      "unidad": "unidades",      "distribuidor": "El Centro"},
+        {"nombre": "Emoliente",          "unidad": "litros",        "distribuidor": "El Centro"},
+        {"nombre": "Chicha de jora",     "unidad": "litros",        "distribuidor": "Avelino"},
+        {"nombre": "Tissues",            "unidad": "paquetes x10",  "distribuidor": "Makro"},
+        {"nombre": "Guantes negros M",   "unidad": "cajas",         "distribuidor": "Aldair / Motta"},
+        {"nombre": "Tocas",              "unidad": "cajas",         "distribuidor": "Aldair / Motta"},
+    ],
+
+    # ── AV. ESTADOS UNIDOS ────────────────────────────────────────────────────
+    "Carlos": [
+        {"nombre": "Papa",               "unidad": "costal",        "distribuidor": "Acomare"},
+        {"nombre": "Kion",               "unidad": "kg",            "distribuidor": "Acomare"},
+        {"nombre": "Fideo",              "unidad": "kg",            "distribuidor": "Alicorp / Makro"},
+        {"nombre": "Zanahoria",          "unidad": "kg",            "distribuidor": "Acomare"},
+        {"nombre": "Huevos",             "unidad": "plancha",       "distribuidor": "Acomare"},
+        {"nombre": "Gallinas llegada",   "unidad": "unidades",      "distribuidor": "Avelino"},
+        {"nombre": "Pollos llegada",     "unidad": "unidades",      "distribuidor": "Avelino"},
+        {"nombre": "Gallinas congeladas","unidad": "unidades",      "distribuidor": "Avelino"},
+        {"nombre": "Pollos congelados",  "unidad": "unidades",      "distribuidor": "Avelino"},
+    ],
+    "Flor": [
+        {"nombre": "Apio",               "unidad": "unidades",      "distribuidor": "Avelino"},
+        {"nombre": "Poro",               "unidad": "unidades",      "distribuidor": "Avelino"},
+        {"nombre": "Mallas",             "unidad": "paquetes x50",  "distribuidor": "Aldair / Motta"},
+        {"nombre": "Sal",                "unidad": "kg",            "distribuidor": "Alicorp"},
+        {"nombre": "Botellas litro",     "unidad": "unidades",      "distribuidor": "Aldair / Motta"},
+        {"nombre": "Botellas pequeñas",  "unidad": "unidades",      "distribuidor": "Aldair / Motta"},
+    ],
+    "Danitza": [
+        {"nombre": "Fórmula gallinas",   "unidad": "kg",            "distribuidor": "Avelino"},
+        {"nombre": "Fórmula pollos",     "unidad": "kg",            "distribuidor": "Avelino"},
+        {"nombre": "Gallinas cierre",    "unidad": "unidades",      "distribuidor": "Avelino"},
+        {"nombre": "Pollos cierre",      "unidad": "unidades",      "distribuidor": "Avelino"},
+        {"nombre": "Tuppers litro",      "unidad": "paquetes x25",  "distribuidor": "Aldair / Motta"},
+        {"nombre": "Tuppers medio litro","unidad": "paquetes x25",  "distribuidor": "Aldair / Motta"},
+    ],
+    "María Vargas": [
+        {"nombre": "Conteo papas jornada","unidad": "unidades",     "distribuidor": "—"},
+        {"nombre": "Huevos jornada",     "unidad": "unidades",      "distribuidor": "—"},
+        {"nombre": "Guantes blancos M",  "unidad": "pares",         "distribuidor": "Aldair / Motta"},
+        {"nombre": "Tocas",              "unidad": "unidades",      "distribuidor": "Aldair / Motta"},
+    ],
+    "Brendali": [
+        {"nombre": "Masa de yucas",          "unidad": "kg",            "distribuidor": "Avelino"},
+        {"nombre": "Pan rústico",            "unidad": "unidades",      "distribuidor": "Mercado Incas"},
+        {"nombre": "Mantequilla",            "unidad": "kg",            "distribuidor": "Makro"},
+        {"nombre": "Ajo",                    "unidad": "kg",            "distribuidor": "Acomare"},
+        {"nombre": "Cebolla",                "unidad": "kg",            "distribuidor": "Acomare"},
+        {"nombre": "Aceite",                 "unidad": "litros",        "distribuidor": "Alicorp"},
+        {"nombre": "Harina",                 "unidad": "kg",            "distribuidor": "Makro"},
+        {"nombre": "Anís",                   "unidad": "kg",            "distribuidor": "Makro"},
+        {"nombre": "Orégano",                "unidad": "kg",            "distribuidor": "Makro"},
+        {"nombre": "Polvo de hornear",       "unidad": "kg",            "distribuidor": "Makro"},
+        {"nombre": "Levadura",               "unidad": "kg",            "distribuidor": "Makro"},
+        {"nombre": "Café",                   "unidad": "kg",            "distribuidor": "Mercado Incas / Makro"},
+        {"nombre": "Azúcar",                 "unidad": "kg",            "distribuidor": "Mercado Incas / Makro"},
+        {"nombre": "Clavo de olor",          "unidad": "kg",            "distribuidor": "Makro"},
+        {"nombre": "Comino molido",          "unidad": "kg",            "distribuidor": "Makro"},
+        {"nombre": "Comino entero",          "unidad": "kg",            "distribuidor": "Makro"},
+        {"nombre": "Canela entera",          "unidad": "kg",            "distribuidor": "Makro"},
+        {"nombre": "Té natural",             "unidad": "cajas",         "distribuidor": "Mercado Incas / Makro"},
+        {"nombre": "Orégano seco",           "unidad": "kg",            "distribuidor": "Makro"},
+        {"nombre": "Ají panca color",        "unidad": "kg",            "distribuidor": "Makro"},
+        {"nombre": "Ají panca sabor",        "unidad": "kg",            "distribuidor": "Makro"},
+        {"nombre": "Pan seco",               "unidad": "kg",            "distribuidor": "Mercado Incas"},
+        {"nombre": "Inf. Té",                "unidad": "cajas",         "distribuidor": "Mercado Incas / Makro"},
+        {"nombre": "Inf. Anís",              "unidad": "cajas",         "distribuidor": "Mercado Incas / Makro"},
+        {"nombre": "Inf. Cedrón",            "unidad": "cajas",         "distribuidor": "Mercado Incas / Makro"},
+        {"nombre": "Inf. Muña",              "unidad": "cajas",         "distribuidor": "Mercado Incas / Makro"},
+        {"nombre": "Inf. Flor de Jamaica",   "unidad": "cajas",         "distribuidor": "Mercado Incas / Makro"},
+        {"nombre": "Inf. Boldo",             "unidad": "cajas",         "distribuidor": "Mercado Incas / Makro"},
+        # Productos heredados de Tamara
+        {"nombre": "Bolsitas toppings",      "unidad": "paquetes x100", "distribuidor": "Aldair / Motta"},
+        {"nombre": "Bolsitas toppings grandes","unidad": "paquetes x100","distribuidor": "Aldair / Motta"},
+        {"nombre": "Tuppers cebolla china",  "unidad": "paquetes x50",  "distribuidor": "Aldair / Motta"},
+        {"nombre": "Rocoto",                 "unidad": "kg",            "distribuidor": "Acomare"},
+        {"nombre": "Cebolla china",          "unidad": "mazo",          "distribuidor": "Avelino"},
+        {"nombre": "Limón",                  "unidad": "cajas",         "distribuidor": "Acomare"},
+        {"nombre": "Canchita",               "unidad": "kg",            "distribuidor": "Makro"},
+        {"nombre": "Ají limo",               "unidad": "kg",            "distribuidor": "Acomare"},
+    ],
+    "Jimena": [
+        {"nombre": "Bolsas cubiertos",       "unidad": "paquetes x50",  "distribuidor": "Aldair / Motta"},
+        {"nombre": "Bolsas Rappi",           "unidad": "paquetes x50",  "distribuidor": "Aldair / Motta"},
+        {"nombre": "Cucharas plástico",      "unidad": "paquetes x50",  "distribuidor": "Aldair / Motta"},
+        {"nombre": "Bolsas chismosas N°19",  "unidad": "paquetes x50",  "distribuidor": "Aldair / Motta"},
+        {"nombre": "Bolsas tupper",          "unidad": "rollos",        "distribuidor": "Aldair / Motta"},
+        {"nombre": "Grapas",                 "unidad": "cajas",         "distribuidor": "Aldair / Motta"},
+    ],
+    "Sebastian": [
+        {"nombre": "Trapos de mesa",         "unidad": "unidades",      "distribuidor": "Makro"},
+        {"nombre": "Poet",                   "unidad": "unidades",      "distribuidor": "Makro"},
+        {"nombre": "Limpia mesas",           "unidad": "litros",        "distribuidor": "Makro"},
+        {"nombre": "Cloro",                  "unidad": "litros",        "distribuidor": "Makro"},
+        {"nombre": "Mondadientes",           "unidad": "unidades",      "distribuidor": "Aldair / Motta"},
+        {"nombre": "Tissues",                "unidad": "paquetes x25",  "distribuidor": "Makro"},
+    ],
+    "Ivan": [
+        {"nombre": "Coca-Cola",              "unidad": "unidades",      "distribuidor": "Coca-Cola"},
+        {"nombre": "Inca-Cola",              "unidad": "unidades",      "distribuidor": "Coca-Cola"},
+        {"nombre": "Fanta",                  "unidad": "unidades",      "distribuidor": "Coca-Cola"},
+        {"nombre": "Sprite",                 "unidad": "unidades",      "distribuidor": "Coca-Cola"},
+        {"nombre": "Pepsi",                  "unidad": "unidades",      "distribuidor": "El Centro"},
+        {"nombre": "Bolsas escocesas",       "unidad": "unidades",      "distribuidor": "Aldair / Motta"},
+        {"nombre": "Agua San Luis",          "unidad": "unidades",      "distribuidor": "Coca-Cola"},
+        {"nombre": "Agua Cielo",             "unidad": "unidades",      "distribuidor": "Coca-Cola"},
+        {"nombre": "Rollos impresora",       "unidad": "unidades",      "distribuidor": "Tienda cerca sede"},
+        {"nombre": "Gallinas jornada",       "unidad": "unidades",      "distribuidor": "Avelino"},
+        {"nombre": "Gallinas cierre",        "unidad": "unidades",      "distribuidor": "Avelino"},
+    ],
+    "Lionel": [
+        {"nombre": "Chicha morada",          "unidad": "litros",        "distribuidor": "Avelino"},
+        {"nombre": "Emoliente",              "unidad": "litros",        "distribuidor": "El Centro"},
+        {"nombre": "Chicha de jora",         "unidad": "litros",        "distribuidor": "Avelino"},
+        {"nombre": "Jugo de maracuyá",       "unidad": "litros",        "distribuidor": "Avelino"},
     ],
 }
 
+# ─── STOCK IDEAL ──────────────────────────────────────────────────────────────
 STOCK_IDEAL = {
+    # Umacollo
     "Papa": 1.5, "Zanahoria": 6, "Kion": 6, "Rocoto": 4, "Ají limo": 0.5,
     "Limón": 1, "Huevos": 18, "Culantro": 1, "Cebolla china": 1, "Maracuyá": 5,
     "Maíz morado": 3, "Fideo": 12, "Sal": 12, "Aceite": 20, "Mantequilla": 0.5,
@@ -142,25 +292,45 @@ STOCK_IDEAL = {
     "Tuppers litro": 20, "Tuppers medio litro": 20, "Botellas pequeñas": 100,
     "Botellas grandes": 60, "Guantes negros M": 3, "Guantes blancos M": 3,
     "Cloro": 8, "Trapos de mesa": 20, "Canchita": 9, "Harina": 10,
+    "Ajinomoto": 1, "Mallas": 2, "Fórmula de caldo": 5,
+    "Gallinas llegada": 50, "Pollos llegada": 10,
+    "Gallinas cierre": 30, "Pollos cierre": 5,
+    # EU específicos
+    "Gallinas jornada": 50, "Botellas litro": 30,
+    "Fórmula gallinas": 5, "Fórmula pollos": 3,
+    "Conteo papas jornada": 200, "Huevos jornada": 200,
+    "Masa de yucas": 20, "Pan rústico": 100,
+    "Ajo": 2, "Cebolla": 10, "Anís": 0.5, "Orégano": 0.5,
+    "Polvo de hornear": 0.5, "Levadura": 0.5, "Café": 1, "Azúcar": 10,
+    "Clavo de olor": 0.2, "Comino molido": 0.5, "Comino entero": 0.5,
+    "Canela entera": 0.3, "Té natural": 3, "Orégano seco": 0.5,
+    "Ají panca color": 2, "Ají panca sabor": 2, "Pan seco": 5,
+    "Inf. Té": 3, "Inf. Anís": 3, "Inf. Cedrón": 3, "Inf. Muña": 3,
+    "Inf. Flor de Jamaica": 3, "Inf. Boldo": 3, "Inf. Flor Jamaica": 3,
+    "Bolsas cubiertos": 5, "Bolsas Rappi": 5, "Cucharas plástico": 5,
+    "Bolsas chismosas N°19": 5, "Bolsas tupper": 3, "Grapas": 2,
+    "Mondadientes": 500, "Tissues": 5, "Poet": 5,
+    "Limpia mesas": 5, "Bolsas escocesas": 50, "Rollos impresora": 5,
+    "Bolsitas toppings": 5, "Bolsitas toppings grandes": 5,
+    "Tuppers cebolla china": 3, "Tuppers anisado": 3,
+    "Chicha morada": 10, "Emoliente": 10, "Chicha de jora": 10,
+    "Jugo de maracuyá": 10, "Tocas": 30,
 }
 
-# ─── GOOGLE SHEETS ─────────────────────────────────────────────────────────────
-SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive",
-]
-
-def get_sheet():
+# ─── GOOGLE SHEETS ────────────────────────────────────────────────────────────
+def get_sheet(sheet_id: str):
     creds_json = os.environ.get("GOOGLE_CREDENTIALS_JSON")
     if not creds_json:
         raise ValueError("Falta GOOGLE_CREDENTIALS_JSON")
     creds = Credentials.from_service_account_info(json.loads(creds_json), scopes=SCOPES)
     client = gspread.authorize(creds)
-    return client.open_by_key(os.environ.get("GOOGLE_SHEET_ID"))
+    return client.open_by_key(sheet_id)
 
-def registrar_stock(nombre: str, producto: str, cantidad: float, unidad: str, distribuidor: str):
+def registrar_stock(nombre: str, producto: str, cantidad: float,
+                    unidad: str, distribuidor: str, sede: str):
+    sheet_id = SHEET_ID_EU if sede == "Av. Estados Unidos" else SHEET_ID_UMACOLLO
     try:
-        hoja = get_sheet().worksheet("Registros")
+        hoja = get_sheet(sheet_id).worksheet("Registros")
         ahora = datetime.now()
         hoja.append_row([
             ahora.strftime("%d/%m/%Y"),
@@ -169,17 +339,17 @@ def registrar_stock(nombre: str, producto: str, cantidad: float, unidad: str, di
         ])
         return True
     except Exception as e:
-        logger.error(f"Error Sheets: {e}")
+        logger.error(f"Error Sheets [{sede}]: {e}")
         return False
 
-def obtener_stock_actual(busqueda: str = None) -> list:
+def obtener_stock_sede(sheet_id: str, sede_label: str, busqueda: str = None) -> list:
     try:
-        datos = get_sheet().worksheet("Registros").get_all_values()
+        datos = get_sheet(sheet_id).worksheet("Registros").get_all_values()
         if len(datos) < 2:
             return []
         ultimo = {}
         for fila in datos[1:]:
-            if len(fila) < 5:
+            if len(fila) < 5 or not fila[3]:
                 continue
             prod = fila[3]
             if busqueda and busqueda.lower() not in prod.lower():
@@ -189,24 +359,61 @@ def obtener_stock_actual(busqueda: str = None) -> list:
                 "producto": prod, "cantidad": fila[4],
                 "unidad": fila[5] if len(fila) > 5 else "",
                 "distribuidor": fila[6] if len(fila) > 6 else "",
+                "sede": sede_label,
             }
         return list(ultimo.values())
     except Exception as e:
-        logger.error(f"Error leyendo Sheets: {e}")
+        logger.error(f"Error leyendo Sheets [{sede_label}]: {e}")
         return []
 
+def obtener_stock_combinado(busqueda: str = None) -> list:
+    r1 = obtener_stock_sede(SHEET_ID_UMACOLLO, "Umacollo", busqueda) if SHEET_ID_UMACOLLO else []
+    r2 = obtener_stock_sede(SHEET_ID_EU, "Av. Estados Unidos", busqueda) if SHEET_ID_EU else []
+    return r1 + r2
+
+def obtener_stock_actual(busqueda: str = None) -> list:
+    """Alias para compatibilidad — devuelve stock combinado de ambas sedes."""
+    return obtener_stock_combinado(busqueda)
+
+# ─── HELPERS ──────────────────────────────────────────────────────────────────
+def _estado_emoji(cant, ideal):
+    if not ideal:
+        return "📦", ""
+    try:
+        pct = float(cant) / float(ideal)
+    except Exception:
+        return "📦", ""
+    if pct < 0.50: return "🔴", f" (ideal: {ideal})"
+    if pct < 0.90: return "🟡", f" (ideal: {ideal})"
+    return "✅", f" (ideal: {ideal})"
+
 # ─── TECLADOS ─────────────────────────────────────────────────────────────────
-def teclado_nombres() -> ReplyKeyboardMarkup:
-    nombres = NOMBRES_TRABAJADORES + [NOMBRE_JEFA]
-    filas = [[KeyboardButton(n)] for n in nombres]
+def teclado_nombres_umacollo() -> ReplyKeyboardMarkup:
+    filas = [[KeyboardButton(n)] for n in NOMBRES_UMACOLLO]
     return ReplyKeyboardMarkup(filas, resize_keyboard=True, one_time_keyboard=True)
 
-def teclado_productos(nombre: str) -> ReplyKeyboardMarkup:
+def teclado_nombres_eu() -> ReplyKeyboardMarkup:
+    filas = [[KeyboardButton(n)] for n in NOMBRES_EU]
+    return ReplyKeyboardMarkup(filas, resize_keyboard=True, one_time_keyboard=True)
+
+def teclado_sede() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup([
+        [KeyboardButton("📍 Umacollo")],
+        [KeyboardButton("📍 Av. Estados Unidos")],
+    ], resize_keyboard=True, one_time_keyboard=True)
+
+def teclado_productos(nombre: str, reportados: set = None) -> ReplyKeyboardMarkup:
+    """Muestra los productos del trabajador. Los ya reportados llevan ✓."""
+    reportados = reportados or set()
     prods = [p["nombre"] for p in PRODUCTOS.get(nombre, [])]
-    prods.append("✅ Terminé por hoy")
     filas = []
     for i in range(0, len(prods), 2):
-        filas.append([KeyboardButton(b) for b in prods[i:i+2]])
+        fila = []
+        for prod in prods[i:i+2]:
+            label = f"✓ {prod}" if prod in reportados else prod
+            fila.append(KeyboardButton(label))
+        filas.append(fila)
+    filas.append([KeyboardButton("📊 Ver stock"), KeyboardButton("✅ Terminé por hoy")])
     return ReplyKeyboardMarkup(filas, resize_keyboard=True)
 
 def teclado_confirmacion(cantidad: str, unidad: str) -> ReplyKeyboardMarkup:
@@ -217,8 +424,8 @@ def teclado_confirmacion(cantidad: str, unidad: str) -> ReplyKeyboardMarkup:
 
 def teclado_jefa() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup([
-        [KeyboardButton("🔴 Stock crítico"),    KeyboardButton("🛒 Lista de compras")],
-        [KeyboardButton("🔍 Consultar producto"),KeyboardButton("📊 Resumen del día")],
+        [KeyboardButton("🔴 Stock crítico"),     KeyboardButton("🛒 Lista de compras")],
+        [KeyboardButton("🔍 Consultar producto"), KeyboardButton("📊 Resumen del día")],
         [KeyboardButton("📍 Por distribuidor")],
     ], resize_keyboard=True)
 
@@ -228,74 +435,82 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     usuario = buscar_usuario(user_id)
 
     if usuario:
-        # Ya registrado — ir directo al flujo correcto
         context.user_data["nombre"] = usuario["nombre"]
         context.user_data["rol"]    = usuario["rol"]
+        context.user_data["sede"]   = usuario.get("sede")
+        context.user_data.setdefault("reportados", set())
         return await bienvenida(update, context)
 
-    # ── Auto-registro por deep link (/start milagros, /start mozo, etc.) ──
-    DEEP_LINK_MAP = {
-        "milagros": "Milagros",
-        "ruth":     "Ruth",
-        "miguel":   "Miguel",
-        "josue":    "Josué",
-        "josué":    "Josué",
-        "mozo":     "Mozo 1",
-        "adriana":  "Adriana",
-    }
+    # Auto-registro por deep link
     if context.args:
-        param = context.args[0].lower().strip()
-        nombre = DEEP_LINK_MAP.get(param)
-        if nombre:
-            rol = "jefa" if nombre == NOMBRE_JEFA else "trabajador"
-            guardar_usuario(user_id, nombre, rol)
-            context.user_data["nombre"] = nombre
-            context.user_data["rol"]    = rol
+        param  = context.args[0].lower().strip()
+        datos  = DEEP_LINK_MAP.get(param)
+        if datos:
+            nombre, rol, sede = datos
+            guardar_usuario(user_id, nombre, rol, sede)
+            context.user_data["nombre"]    = nombre
+            context.user_data["rol"]       = rol
+            context.user_data["sede"]      = sede
+            context.user_data["reportados"]= set()
             await update.message.reply_text(
-                f"✅ ¡Hola *{nombre}*! Quedaste registrado automáticamente.\n"
+                f"✅ ¡Hola *{nombre}*! Quedaste registrado.\n"
                 f"Ya puedes empezar a reportar stock 👇",
                 parse_mode="Markdown",
                 reply_markup=ReplyKeyboardRemove()
             )
             return await bienvenida(update, context)
 
-    # Primera vez sin deep link — mostrar teclado de nombres
+    # Sin deep link — preguntar sede primero
     await update.message.reply_text(
-        "👋 Hola, ¿cuál es tu nombre?",
-        reply_markup=teclado_nombres()
+        "👋 Hola, ¿de qué sede eres?",
+        reply_markup=teclado_sede()
     )
     return REGISTRO_NOMBRE
 
-
 async def registrar_nombre(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    nombre = update.message.text.strip()
-    nombres_validos = NOMBRES_TRABAJADORES + [NOMBRE_JEFA]
+    texto = update.message.text.strip()
 
-    if nombre not in nombres_validos:
+    # Paso 1: eligió sede
+    if texto in ("📍 Umacollo", "📍 Av. Estados Unidos"):
+        sede = "Umacollo" if "Umacollo" in texto else "Av. Estados Unidos"
+        context.user_data["sede_pendiente"] = sede
+        teclado = teclado_nombres_umacollo() if sede == "Umacollo" else teclado_nombres_eu()
         await update.message.reply_text(
-            "Toca tu nombre del teclado 👇",
-            reply_markup=teclado_nombres()
+            "¿Cuál es tu nombre?",
+            reply_markup=teclado
         )
         return REGISTRO_NOMBRE
 
-    rol = "jefa" if nombre == NOMBRE_JEFA else "trabajador"
-    user_id = str(update.effective_user.id)
-    guardar_usuario(user_id, nombre, rol)
+    # Paso 2: eligió nombre
+    sede = context.user_data.get("sede_pendiente")
+    nombres_validos = (NOMBRES_UMACOLLO if sede == "Umacollo" else NOMBRES_EU) + [NOMBRE_JEFA]
 
-    context.user_data["nombre"] = nombre
-    context.user_data["rol"]    = rol
+    if texto not in nombres_validos:
+        await update.message.reply_text(
+            "Toca tu nombre del teclado 👇",
+            reply_markup=teclado_nombres_umacollo() if sede == "Umacollo" else teclado_nombres_eu()
+        )
+        return REGISTRO_NOMBRE
+
+    rol = "jefa" if texto == NOMBRE_JEFA else "trabajador"
+    guardar_usuario(user_id=str(update.effective_user.id),
+                    nombre=texto, rol=rol, sede=sede)
+    context.user_data["nombre"]     = texto
+    context.user_data["rol"]        = rol
+    context.user_data["sede"]       = sede
+    context.user_data["reportados"] = set()
 
     await update.message.reply_text(
-        f"✅ Registrado como *{nombre}*.\n¡Ya puedes usar el bot!",
+        f"✅ Registrado como *{texto}*. ¡Listo!",
         parse_mode="Markdown",
         reply_markup=ReplyKeyboardRemove()
     )
     return await bienvenida(update, context)
 
-
 async def bienvenida(update: Update, context: ContextTypes.DEFAULT_TYPE):
     nombre = context.user_data["nombre"]
     rol    = context.user_data["rol"]
+    context.user_data.setdefault("reportados", set())
 
     if rol == "jefa":
         await update.message.reply_text(
@@ -304,45 +519,80 @@ async def bienvenida(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return JEFA_MENU
 
+    reportados = context.user_data["reportados"]
+    total   = len(PRODUCTOS.get(nombre, []))
+    hechos  = len(reportados)
+    progreso = f" ({hechos}/{total} ✓)" if hechos > 0 else ""
+
     await update.message.reply_text(
-        f"Hola {nombre} 👋\nToca un producto y escribe cuánto hay.",
-        reply_markup=teclado_productos(nombre)
+        f"Hola {nombre} 👋{progreso}\nToca un producto y escribe cuánto hay.",
+        reply_markup=teclado_productos(nombre, reportados)
     )
     return ELEGIR_PRODUCTO
 
 # ─── FLUJO TRABAJADOR ─────────────────────────────────────────────────────────
 async def elegir_producto(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    texto  = update.message.text
-    nombre = context.user_data.get("nombre")
+    texto   = update.message.text
+    nombre  = context.user_data.get("nombre")
+    reportados = context.user_data.setdefault("reportados", set())
 
     if texto == "✅ Terminé por hoy":
+        total  = len(PRODUCTOS.get(nombre, []))
+        hechos = len(reportados)
+        faltantes = [p["nombre"] for p in PRODUCTOS.get(nombre, [])
+                     if p["nombre"] not in reportados]
+        if faltantes and hechos < total:
+            lista = "\n".join(f"  • {p}" for p in faltantes)
+            await update.message.reply_text(
+                f"⚠️ Aún te faltan *{total - hechos}* productos:\n{lista}\n\n"
+                f"¿Seguro que terminaste? Toca *✅ Terminé por hoy* otra vez para confirmar.",
+                parse_mode="Markdown",
+                reply_markup=teclado_productos(nombre, reportados)
+            )
+            # Marcar que ya se advirtió para no repetir el aviso
+            context.user_data["advertido"] = True
+            return ELEGIR_PRODUCTO
+
         await update.message.reply_text(
-            "¡Listo! Gracias 🙌\nEscribe /inicio cuando quieras volver.",
+            f"¡Listo! Gracias 🙌 Reportaste {hechos}/{total} productos.\n"
+            f"Escribe /inicio cuando quieras volver.",
             reply_markup=ReplyKeyboardRemove()
         )
+        context.user_data["reportados"] = set()
+        context.user_data["advertido"]  = False
         return ConversationHandler.END
 
-    productos = PRODUCTOS.get(nombre, [])
-    prod_obj  = next((p for p in productos if p["nombre"] == texto), None)
+    if texto == "📊 Ver stock":
+        await update.message.reply_text(
+            "🔍 ¿Qué producto quieres consultar?\nEscribe el nombre (o parte de él):",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        return VER_STOCK
+
+    # Limpiar prefijo ✓ si el producto ya fue reportado
+    texto_limpio = texto.replace("✓ ", "").strip()
+    productos    = PRODUCTOS.get(nombre, [])
+    prod_obj     = next((p for p in productos if p["nombre"] == texto_limpio), None)
 
     if not prod_obj:
         await update.message.reply_text(
             "Toca un producto del teclado 👇",
-            reply_markup=teclado_productos(nombre)
+            reply_markup=teclado_productos(nombre, reportados)
         )
         return ELEGIR_PRODUCTO
 
-    context.user_data["producto"] = prod_obj
+    context.user_data["producto"]  = prod_obj
+    context.user_data["advertido"] = False
+    hint = "\n_Ej: 1.250 = 1 kg 250 g  ·  0.750 = 750 g_" if prod_obj["unidad"] == "kg" else ""
     await update.message.reply_text(
-        f"*{texto}*\n¿Cuántos {prod_obj['unidad']} hay ahora?",
+        f"*{texto_limpio}*\n¿Cuántos {prod_obj['unidad']} hay ahora?{hint}",
         parse_mode="Markdown",
         reply_markup=ReplyKeyboardRemove()
     )
     return INGRESAR_CANTIDAD
 
-
 async def ingresar_cantidad(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    texto = update.message.text.strip().replace(",", ".")
+    texto    = update.message.text.strip().replace(",", ".")
     prod_obj = context.user_data.get("producto")
 
     try:
@@ -354,22 +604,24 @@ async def ingresar_cantidad(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return INGRESAR_CANTIDAD
 
     context.user_data["cantidad"] = cantidad
+    if prod_obj.get("unidad") == "kg" and cantidad != int(cantidad):
+        cant_str = f"{round(cantidad, 3):.3f}".rstrip("0")
+    else:
+        cant_str = str(int(cantidad) if cantidad == int(cantidad) else cantidad)
     await update.message.reply_text(
-        f"¿Confirmas?\n*{prod_obj['nombre']}* → {cantidad} {prod_obj['unidad']}",
+        f"¿Confirmas?\n*{prod_obj['nombre']}* → {cant_str} {prod_obj['unidad']}",
         parse_mode="Markdown",
-        reply_markup=teclado_confirmacion(
-            str(int(cantidad) if cantidad == int(cantidad) else cantidad),
-            prod_obj["unidad"]
-        )
+        reply_markup=teclado_confirmacion(cant_str, prod_obj["unidad"])
     )
     return CONFIRMAR
-
 
 async def confirmar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto    = update.message.text
     nombre   = context.user_data.get("nombre")
+    sede     = context.user_data.get("sede", "Umacollo")
     prod_obj = context.user_data.get("producto")
     cantidad = context.user_data.get("cantidad")
+    reportados = context.user_data.setdefault("reportados", set())
 
     if "Corregir" in texto:
         await update.message.reply_text(
@@ -381,24 +633,26 @@ async def confirmar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if "Confirmar" in texto:
         ok = registrar_stock(nombre, prod_obj["nombre"], cantidad,
-                             prod_obj["unidad"], prod_obj["distribuidor"])
+                             prod_obj["unidad"], prod_obj["distribuidor"], sede)
+
+        # Marcar como reportado
+        reportados.add(prod_obj["nombre"])
+        context.user_data["reportados"] = reportados
 
         ideal = STOCK_IDEAL.get(prod_obj["nombre"])
-        if ideal:
-            if cantidad < ideal * 0.5:
-                estado = f"\n🔴 Stock muy bajo (ideal: {ideal} {prod_obj['unidad']})"
-            elif cantidad < ideal * 0.9:
-                estado = f"\n🟡 Stock bajo (ideal: {ideal} {prod_obj['unidad']})"
-            else:
-                estado = "\n✅ Stock OK"
-        else:
-            estado = ""
+        emoji, ideal_txt = _estado_emoji(cantidad, ideal)
 
-        msg = f"Guardado ✅{estado}\n\n¿Qué otro producto reportas?"
+        total  = len(PRODUCTOS.get(nombre, []))
+        hechos = len(reportados)
+        prog   = f"Progreso: {hechos}/{total} productos ✓"
+
+        msg = f"Guardado ✅{ideal_txt} {emoji}\n{prog}\n\n¿Qué otro producto reportas?"
         if not ok:
-            msg = f"⚠️ Error al guardar, avísale a Adriana.{estado}\n\n¿Qué otro producto reportas?"
+            msg = f"⚠️ Error al guardar (avisa a Adriana){ideal_txt}\n{prog}\n\n¿Qué otro producto reportas?"
 
-        await update.message.reply_text(msg, reply_markup=teclado_productos(nombre))
+        await update.message.reply_text(
+            msg, reply_markup=teclado_productos(nombre, reportados)
+        )
         return ELEGIR_PRODUCTO
 
     await update.message.reply_text(
@@ -406,6 +660,37 @@ async def confirmar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=teclado_confirmacion(str(cantidad), prod_obj["unidad"])
     )
     return CONFIRMAR
+
+async def ver_stock_consulta(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    busqueda   = update.message.text.strip()
+    nombre     = context.user_data.get("nombre")
+    reportados = context.user_data.get("reportados", set())
+    sede       = context.user_data.get("sede")
+    if sede:
+        sheet_id  = SHEET_ID_EU if sede == "Av. Estados Unidos" else SHEET_ID_UMACOLLO
+        registros = obtener_stock_sede(sheet_id, sede, busqueda)
+    else:
+        registros = obtener_stock_combinado(busqueda)
+
+    if registros:
+        msg = f"📦 *{busqueda}:*\n\n"
+        for r in registros[:6]:
+            ideal = STOCK_IDEAL.get(r["producto"])
+            emoji, ideal_txt = _estado_emoji(r["cantidad"], ideal)
+            msg += (
+                f"{emoji} *{r['sede']}*\n"
+                f"  {r['cantidad']} {r['unidad']}"
+                f"{ideal_txt}\n"
+                f"  {r['persona']} — {r['fecha']} {r['hora']}\n\n"
+            )
+    else:
+        msg = f"❌ No encontré *{busqueda}*.\nRevisa cómo está escrito."
+
+    await update.message.reply_text(
+        msg.strip(), parse_mode="Markdown",
+        reply_markup=teclado_productos(nombre, reportados)
+    )
+    return ELEGIR_PRODUCTO
 
 # ─── FLUJO JEFA ───────────────────────────────────────────────────────────────
 async def jefa_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -419,7 +704,7 @@ async def jefa_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return JEFA_CONSULTA
 
     if texto == "🔴 Stock crítico":
-        registros = obtener_stock_actual()
+        registros = obtener_stock_combinado()
         criticos, bajos = [], []
         for r in registros:
             ideal = STOCK_IDEAL.get(r["producto"])
@@ -429,24 +714,28 @@ async def jefa_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 cant = float(r["cantidad"])
             except Exception:
                 continue
-            if cant < ideal * 0.5:
-                criticos.append(f"🔴 {r['producto']}: {cant} {r['unidad']} (ideal: {ideal})")
-            elif cant < ideal * 0.9:
-                bajos.append(f"🟡 {r['producto']}: {cant} {r['unidad']} (ideal: {ideal})")
+            sede_tag = f"[{r['sede']}]"
+            if cant < ideal * 0.50:
+                criticos.append(f"🔴 {r['producto']} {sede_tag}: {cant} {r['unidad']} (ideal: {ideal})")
+            elif cant < ideal * 0.90:
+                bajos.append(f"🟡 {r['producto']} {sede_tag}: {cant} {r['unidad']} (ideal: {ideal})")
 
         if not criticos and not bajos:
-            msg = "✅ Todo el stock está bien."
+            msg = "✅ Todo el stock está bien en ambas sedes."
         else:
             msg = ""
             if criticos:
-                msg += "*Crítico — comprar hoy:*\n" + "\n".join(criticos) + "\n\n"
+                msg += "*🔴 Crítico — comprar HOY:*\n" + "\n".join(criticos) + "\n\n"
             if bajos:
-                msg += "*Bajo — comprar esta semana:*\n" + "\n".join(bajos)
-        await update.message.reply_text(msg.strip() or "✅ Todo bien.", parse_mode="Markdown", reply_markup=teclado_jefa())
+                msg += "*🟡 Bajo — comprar esta semana:*\n" + "\n".join(bajos)
+        await update.message.reply_text(
+            msg.strip() or "✅ Todo bien.", parse_mode="Markdown",
+            reply_markup=teclado_jefa()
+        )
         return JEFA_MENU
 
     if texto == "🛒 Lista de compras":
-        registros = obtener_stock_actual()
+        registros = obtener_stock_combinado()
         por_dist  = {}
         for r in registros:
             ideal = STOCK_IDEAL.get(r["producto"])
@@ -456,40 +745,47 @@ async def jefa_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 cant = float(r["cantidad"])
             except Exception:
                 continue
-            if cant < ideal * 0.9:
-                dist = r["distribuidor"]
-                falta = round(ideal - cant, 1)
+            if cant < ideal * 0.90:
+                dist  = r["distribuidor"]
+                falta = round(ideal - cant, 2)
+                emoji = "🔴" if cant < ideal * 0.50 else "🟡"
                 por_dist.setdefault(dist, []).append(
-                    f"  • {r['producto']}: {falta} {r['unidad']}"
+                    f"  {emoji} {r['producto']} [{r['sede']}]: {falta} {r['unidad']}"
                 )
         if not por_dist:
             msg = "✅ No hay nada urgente que comprar."
         else:
-            msg = "*Lista de compras por lugar:*\n"
+            msg = "*🛒 Lista de compras por lugar:*\n"
             for dist in sorted(por_dist):
                 msg += f"\n📍 *{dist}*\n" + "\n".join(por_dist[dist])
         await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=teclado_jefa())
         return JEFA_MENU
 
     if texto == "📊 Resumen del día":
-        registros = obtener_stock_actual()
         hoy = datetime.now().strftime("%d/%m/%Y")
-        hoy_regs  = [r for r in registros if r.get("fecha") == hoy]
-        personas  = {}
-        for r in hoy_regs:
-            personas[r["persona"]] = personas.get(r["persona"], 0) + 1
-        msg = f"📊 *Resumen {hoy}*\n\n"
-        if personas:
-            for p, n in sorted(personas.items()):
-                msg += f"• {p}: {n} productos\n"
-            msg += f"\nTotal reportado: {len(hoy_regs)} productos"
-        else:
-            msg += "Aún no hay reportes hoy."
+        msg = f"📊 *Resumen {hoy}*\n"
+
+        for sede_label, sheet_id in [("Umacollo", SHEET_ID_UMACOLLO),
+                                      ("Av. Estados Unidos", SHEET_ID_EU)]:
+            if not sheet_id:
+                continue
+            registros = obtener_stock_sede(sheet_id, sede_label)
+            hoy_regs  = [r for r in registros if r.get("fecha") == hoy]
+            personas  = {}
+            for r in hoy_regs:
+                personas[r["persona"]] = personas.get(r["persona"], 0) + 1
+            msg += f"\n📍 *{sede_label}*\n"
+            if personas:
+                for p, n in sorted(personas.items()):
+                    msg += f"  • {p}: {n} productos\n"
+            else:
+                msg += "  Sin reportes hoy\n"
+
         await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=teclado_jefa())
         return JEFA_MENU
 
     if texto == "📍 Por distribuidor":
-        registros = obtener_stock_actual()
+        registros = obtener_stock_combinado()
         por_dist  = {}
         for r in registros:
             ideal = STOCK_IDEAL.get(r["producto"])
@@ -499,11 +795,11 @@ async def jefa_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 cant = float(r["cantidad"])
             except Exception:
                 continue
-            if cant < ideal * 0.9:
-                dist = r["distribuidor"]
-                emoji = "🔴" if cant < ideal * 0.5 else "🟡"
+            if cant < ideal * 0.90:
+                dist  = r["distribuidor"]
+                emoji = "🔴" if cant < ideal * 0.50 else "🟡"
                 por_dist.setdefault(dist, []).append(
-                    f"  {emoji} {r['producto']}: {cant}/{ideal} {r['unidad']}"
+                    f"  {emoji} {r['producto']} [{r['sede']}]: {cant}/{ideal} {r['unidad']}"
                 )
         if not por_dist:
             msg = "✅ Nada urgente por distribuidor."
@@ -517,35 +813,41 @@ async def jefa_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Usa los botones 👇", reply_markup=teclado_jefa())
     return JEFA_MENU
 
-
 async def jefa_consulta(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    busqueda  = update.message.text.strip()
-    registros = obtener_stock_actual(busqueda)
+    busqueda = update.message.text.strip()
 
-    if registros:
-        msg = ""
-        for r in registros:
-            ideal = STOCK_IDEAL.get(r["producto"])
-            try:
-                cant = float(r["cantidad"])
-                if ideal:
-                    emoji = "🔴" if cant < ideal * 0.5 else ("🟡" if cant < ideal * 0.9 else "✅")
-                else:
-                    emoji = "📦"
-            except Exception:
-                emoji = "📦"
+    r_uma = obtener_stock_sede(SHEET_ID_UMACOLLO, "Umacollo", busqueda) if SHEET_ID_UMACOLLO else []
+    r_eu  = obtener_stock_sede(SHEET_ID_EU, "Av. Estados Unidos", busqueda) if SHEET_ID_EU else []
+
+    if not r_uma and not r_eu:
+        await update.message.reply_text(
+            f'❌ No encontré "{busqueda}". Revisa cómo está escrito.',
+            reply_markup=teclado_jefa()
+        )
+        return JEFA_MENU
+
+    # Agrupar por nombre de producto
+    por_producto: dict = {}
+    for r in r_uma + r_eu:
+        por_producto.setdefault(r["producto"], []).append(r)
+
+    msg = ""
+    for prod, resultados in por_producto.items():
+        ideal = STOCK_IDEAL.get(prod)
+        msg  += f"*{prod}*\n"
+        for r in resultados:
+            emoji, ideal_txt = _estado_emoji(r["cantidad"], ideal)
             msg += (
-                f"{emoji} *{r['producto']}*\n"
-                f"Stock: {r['cantidad']} {r['unidad']}\n"
-                f"Reportado: {r['fecha']} {r['hora']} — {r['persona']}\n"
-                f"Comprar en: {r['distribuidor']}\n\n"
+                f"  {emoji} *{r['sede']}*: {r['cantidad']} {r['unidad']}"
+                f"{ideal_txt}\n"
+                f"     {r['persona']}, {r['fecha']} {r['hora']}\n"
             )
-    else:
-        msg = f"No encontré \"{busqueda}\".\nRevisa cómo está escrito."
+        msg += "\n"
 
-    await update.message.reply_text(msg.strip(), parse_mode="Markdown", reply_markup=teclado_jefa())
+    await update.message.reply_text(
+        msg.strip(), parse_mode="Markdown", reply_markup=teclado_jefa()
+    )
     return JEFA_MENU
-
 
 async def cancelar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -553,7 +855,6 @@ async def cancelar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=ReplyKeyboardRemove()
     )
     return ConversationHandler.END
-
 
 # ─── MAIN ─────────────────────────────────────────────────────────────────────
 def main():
@@ -569,21 +870,21 @@ def main():
             CommandHandler("inicio", start),
         ],
         states={
-            REGISTRO_NOMBRE:  [MessageHandler(filters.TEXT & ~filters.COMMAND, registrar_nombre)],
-            ELEGIR_PRODUCTO:  [MessageHandler(filters.TEXT & ~filters.COMMAND, elegir_producto)],
-            INGRESAR_CANTIDAD:[MessageHandler(filters.TEXT & ~filters.COMMAND, ingresar_cantidad)],
-            CONFIRMAR:        [MessageHandler(filters.TEXT & ~filters.COMMAND, confirmar)],
-            JEFA_MENU:        [MessageHandler(filters.TEXT & ~filters.COMMAND, jefa_menu)],
-            JEFA_CONSULTA:    [MessageHandler(filters.TEXT & ~filters.COMMAND, jefa_consulta)],
+            REGISTRO_NOMBRE:   [MessageHandler(filters.TEXT & ~filters.COMMAND, registrar_nombre)],
+            ELEGIR_PRODUCTO:   [MessageHandler(filters.TEXT & ~filters.COMMAND, elegir_producto)],
+            INGRESAR_CANTIDAD: [MessageHandler(filters.TEXT & ~filters.COMMAND, ingresar_cantidad)],
+            CONFIRMAR:         [MessageHandler(filters.TEXT & ~filters.COMMAND, confirmar)],
+            JEFA_MENU:         [MessageHandler(filters.TEXT & ~filters.COMMAND, jefa_menu)],
+            JEFA_CONSULTA:     [MessageHandler(filters.TEXT & ~filters.COMMAND, jefa_consulta)],
+            VER_STOCK:         [MessageHandler(filters.TEXT & ~filters.COMMAND, ver_stock_consulta)],
         },
         fallbacks=[CommandHandler("cancelar", cancelar)],
         allow_reentry=True,
     )
 
     app.add_handler(conv)
-    logger.info("Bot iniciado ✅")
+    logger.info("Bot iniciado ✅ — Umacollo + Av. Estados Unidos")
     app.run_polling(drop_pending_updates=True)
-
 
 if __name__ == "__main__":
     main()
