@@ -392,6 +392,17 @@ def get_sheet(sheet_id: str):
     client = gspread.authorize(creds)
     return client.open_by_key(sheet_id)
 
+def _get_o_crear_registros(sheet_id: str):
+    """Devuelve la hoja Registros; la crea si no existe."""
+    ss = get_sheet(sheet_id)
+    try:
+        return ss.worksheet("Registros")
+    except Exception:
+        ws = ss.add_worksheet("Registros", rows=1000, cols=8)
+        ws.append_row(["Fecha", "Hora", "Responsable", "Producto",
+                       "Stock Actual", "Unidad", "Distribuidor"])
+        return ws
+
 def registrar_stock(nombre: str, producto: str, cantidad: float,
                     unidad: str, distribuidor: str, sede: str):
     sheet_id = SHEET_ID_EU if sede == "Av. Estados Unidos" else SHEET_ID_UMACOLLO
@@ -400,7 +411,7 @@ def registrar_stock(nombre: str, producto: str, cantidad: float,
         logger.error(msg)
         return False, msg
     try:
-        hoja = get_sheet(sheet_id).worksheet("Registros")
+        hoja = _get_o_crear_registros(sheet_id)
         ahora = datetime.now()
         hoja.append_row([
             ahora.strftime("%d/%m/%Y"),
@@ -409,8 +420,25 @@ def registrar_stock(nombre: str, producto: str, cantidad: float,
         ])
         return True, None
     except Exception as e:
-        logger.error(f"Error Sheets [{sede}]: {e}")
-        return False, str(e)
+        tag = f"{sheet_id[:8]}..." if sheet_id else "(vacío)"
+        logger.error(f"Error Sheets [{sede}|{tag}]: {e}")
+        return False, f"[{tag}] {str(e)[:100]}"
+
+def cargar_reportados_hoy(nombre: str, sede: str) -> set:
+    """Productos ya reportados hoy por este trabajador (para precargar ✓)."""
+    try:
+        hoy = datetime.now().strftime("%d/%m/%Y")
+        sheet_id = SHEET_ID_EU if sede == "Av. Estados Unidos" else SHEET_ID_UMACOLLO
+        if not sheet_id:
+            return set()
+        datos = get_sheet(sheet_id).worksheet("Registros").get_all_values()
+        return {
+            fila[3] for fila in datos[1:]
+            if len(fila) >= 4 and fila[0] == hoy and fila[2] == nombre
+        }
+    except Exception as e:
+        logger.error(f"Error cargando reportados hoy [{nombre}]: {e}")
+        return set()
 
 def obtener_stock_sede(sheet_id: str, sede_label: str, busqueda: str = None) -> list:
     try:
@@ -580,7 +608,6 @@ async def registrar_nombre(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def bienvenida(update: Update, context: ContextTypes.DEFAULT_TYPE):
     nombre = context.user_data["nombre"]
     rol    = context.user_data["rol"]
-    context.user_data.setdefault("reportados", set())
 
     if rol == "jefa":
         await update.message.reply_text(
@@ -588,6 +615,11 @@ async def bienvenida(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=teclado_jefa()
         )
         return JEFA_MENU
+
+    # Precargar productos ya reportados hoy desde Sheets (sobrevive reinicios)
+    if not context.user_data.get("reportados"):
+        sede = context.user_data.get("sede", "Umacollo")
+        context.user_data["reportados"] = cargar_reportados_hoy(nombre, sede)
 
     reportados = context.user_data["reportados"]
     total   = len(PRODUCTOS.get(nombre, []))
