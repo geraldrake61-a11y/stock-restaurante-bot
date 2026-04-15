@@ -329,6 +329,10 @@ def get_sheet(sheet_id: str):
 def registrar_stock(nombre: str, producto: str, cantidad: float,
                     unidad: str, distribuidor: str, sede: str):
     sheet_id = SHEET_ID_EU if sede == "Av. Estados Unidos" else SHEET_ID_UMACOLLO
+    if not sheet_id:
+        msg = f"SHEET_ID vacío para sede '{sede}'"
+        logger.error(msg)
+        return False, msg
     try:
         hoja = get_sheet(sheet_id).worksheet("Registros")
         ahora = datetime.now()
@@ -337,10 +341,10 @@ def registrar_stock(nombre: str, producto: str, cantidad: float,
             ahora.strftime("%H:%M"),
             nombre, producto, cantidad, unidad, distribuidor,
         ])
-        return True
+        return True, None
     except Exception as e:
         logger.error(f"Error Sheets [{sede}]: {e}")
-        return False
+        return False, str(e)
 
 def obtener_stock_sede(sheet_id: str, sede_label: str, busqueda: str = None) -> list:
     try:
@@ -632,8 +636,8 @@ async def confirmar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return INGRESAR_CANTIDAD
 
     if "Confirmar" in texto:
-        ok = registrar_stock(nombre, prod_obj["nombre"], cantidad,
-                             prod_obj["unidad"], prod_obj["distribuidor"], sede)
+        ok, err = registrar_stock(nombre, prod_obj["nombre"], cantidad,
+                                  prod_obj["unidad"], prod_obj["distribuidor"], sede)
 
         # Marcar como reportado
         reportados.add(prod_obj["nombre"])
@@ -648,7 +652,8 @@ async def confirmar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         msg = f"Guardado ✅{ideal_txt} {emoji}\n{prog}\n\n¿Qué otro producto reportas?"
         if not ok:
-            msg = f"⚠️ Error al guardar (avisa a Adriana){ideal_txt}\n{prog}\n\n¿Qué otro producto reportas?"
+            err_short = (err or "desconocido")[:120]
+            msg = f"⚠️ Error al guardar:\n`{err_short}`\n\n{prog}\n\n¿Qué otro producto reportas?"
 
         await update.message.reply_text(
             msg, reply_markup=teclado_productos(nombre, reportados)
