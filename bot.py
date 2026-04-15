@@ -22,20 +22,86 @@ JEFA_MENU        = 4
 JEFA_CONSULTA    = 5
 VER_STOCK        = 6
 
-# ─── ARCHIVO LOCAL ─────────────────────────────────────────────────────────────
-USUARIOS_FILE = "usuarios_registrados.json"
+# ─── PERSISTENCIA DE USUARIOS EN GOOGLE SHEETS ────────────────────────────────
+USUARIOS_FILE  = "usuarios_registrados.json"   # caché local de respaldo
+USUARIOS_SHEET = "Usuarios"                     # pestaña dentro del sheet Umacollo
+
+# Caché en memoria: se llena la primera vez y se actualiza al registrar
+_usuarios_cache: dict | None = None
+
+def _hoja_usuarios():
+    """Devuelve la worksheet Usuarios (la crea si no existe)."""
+    try:
+        ss = get_sheet(SHEET_ID_UMACOLLO)
+        try:
+            return ss.worksheet(USUARIOS_SHEET)
+        except Exception:
+            ws = ss.add_worksheet(USUARIOS_SHEET, rows=200, cols=4)
+            ws.append_row(["user_id", "nombre", "rol", "sede"])
+            return ws
+    except Exception as e:
+        logger.error(f"Error accediendo hoja Usuarios: {e}")
+        return None
 
 def cargar_usuarios() -> dict:
+    global _usuarios_cache
+    if _usuarios_cache is not None:
+        return _usuarios_cache
+    # 1. Intentar desde Google Sheets
+    ws = _hoja_usuarios()
+    if ws:
+        try:
+            filas = ws.get_all_records()  # headers: user_id, nombre, rol, sede
+            usuarios = {}
+            for f in filas:
+                uid = str(f.get("user_id", "")).strip()
+                if uid:
+                    usuarios[uid] = {
+                        "nombre": f.get("nombre", ""),
+                        "rol":    f.get("rol", "trabajador"),
+                        "sede":   f.get("sede") or None,
+                    }
+            _usuarios_cache = usuarios
+            # Sincronizar copia local
+            with open(USUARIOS_FILE, "w", encoding="utf-8") as fp:
+                json.dump(usuarios, fp, ensure_ascii=False, indent=2)
+            return usuarios
+        except Exception as e:
+            logger.error(f"Error leyendo Usuarios de Sheets: {e}")
+    # 2. Fallback: archivo local
     if os.path.exists(USUARIOS_FILE):
-        with open(USUARIOS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+        with open(USUARIOS_FILE, "r", encoding="utf-8") as fp:
+            _usuarios_cache = json.load(fp)
+            return _usuarios_cache
+    _usuarios_cache = {}
     return {}
 
 def guardar_usuario(user_id: str, nombre: str, rol: str, sede: str = None):
-    usuarios = cargar_usuarios()
-    usuarios[str(user_id)] = {"nombre": nombre, "rol": rol, "sede": sede}
-    with open(USUARIOS_FILE, "w", encoding="utf-8") as f:
-        json.dump(usuarios, f, ensure_ascii=False, indent=2)
+    global _usuarios_cache
+    uid = str(user_id)
+    # Actualizar caché en memoria
+    if _usuarios_cache is None:
+        cargar_usuarios()
+    _usuarios_cache[uid] = {"nombre": nombre, "rol": rol, "sede": sede}
+    # Guardar en Google Sheets
+    ws = _hoja_usuarios()
+    if ws:
+        try:
+            celda = None
+            try:
+                celda = ws.find(uid, in_column=1)
+            except Exception:
+                pass
+            fila = [uid, nombre, rol, sede or ""]
+            if celda:
+                ws.update(range_name=f"A{celda.row}:D{celda.row}", values=[fila])
+            else:
+                ws.append_row(fila)
+        except Exception as e:
+            logger.error(f"Error guardando usuario en Sheets: {e}")
+    # Guardar copia local de respaldo
+    with open(USUARIOS_FILE, "w", encoding="utf-8") as fp:
+        json.dump(_usuarios_cache, fp, ensure_ascii=False, indent=2)
 
 def buscar_usuario(user_id: str) -> dict | None:
     return cargar_usuarios().get(str(user_id))
