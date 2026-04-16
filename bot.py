@@ -109,7 +109,7 @@ def buscar_usuario(user_id: str) -> dict | None:
 # ─── CONFIGURACIÓN DE SEDES ───────────────────────────────────────────────────
 NOMBRE_JEFA = "Adriana"
 
-NOMBRES_UMACOLLO = ["Milagros", "Ruth", "Miguel", "Josué", "Mozo 1"]
+NOMBRES_UMACOLLO = ["Milagros", "Ruth", "Miguel", "Josué", "Hermes"]
 NOMBRES_EU       = ["Carlos", "Flor", "Danitza", "María Vargas",
                     "Brendali", "Jimena", "Sebastian", "Ivan", "Lionel"]
 NOMBRES_TRABAJADORES = NOMBRES_UMACOLLO + NOMBRES_EU
@@ -117,8 +117,8 @@ NOMBRES_TRABAJADORES = NOMBRES_UMACOLLO + NOMBRES_EU
 SEDE_POR_NOMBRE = {n: "Umacollo" for n in NOMBRES_UMACOLLO}
 SEDE_POR_NOMBRE.update({n: "Av. Estados Unidos" for n in NOMBRES_EU})
 
-SHEET_ID_UMACOLLO = os.environ.get("GOOGLE_SHEET_ID", "")
-SHEET_ID_EU       = os.environ.get("GOOGLE_SHEET_ID_EU", "")
+SHEET_ID_UMACOLLO = os.environ.get("GOOGLE_SHEET_ID", "").strip()
+SHEET_ID_EU       = os.environ.get("GOOGLE_SHEET_ID_EU", "").strip()
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -133,7 +133,7 @@ DEEP_LINK_MAP = {
     "miguel":      ("Miguel",       "trabajador", "Umacollo"),
     "josue":       ("Josué",        "trabajador", "Umacollo"),
     "josué":       ("Josué",        "trabajador", "Umacollo"),
-    "mozo":        ("Mozo 1",       "trabajador", "Umacollo"),
+    "hermes":        ("Hermes",       "trabajador", "Umacollo"),
     # Av. Estados Unidos
     "carlos":      ("Carlos",       "trabajador", "Av. Estados Unidos"),
     "flor":        ("Flor",         "trabajador", "Av. Estados Unidos"),
@@ -219,7 +219,7 @@ PRODUCTOS = {
         {"nombre": "Bolsitas toppings",       "unidad": "paquetes x200", "distribuidor": "Aldair / Motta"},
         {"nombre": "Bolsitas toppings grandes","unidad": "paquetes x100","distribuidor": "Aldair / Motta"},
     ],
-    "Mozo 1": [
+    "Hermes": [
         {"nombre": "Canchita",           "unidad": "kg",            "distribuidor": "Makro"},
         {"nombre": "Coca-Cola",          "unidad": "unidades",      "distribuidor": "Coca-Cola"},
         {"nombre": "Inca-Cola",          "unidad": "unidades",      "distribuidor": "Coca-Cola"},
