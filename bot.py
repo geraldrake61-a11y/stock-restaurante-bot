@@ -22,6 +22,18 @@ JEFA_MENU        = 4
 JEFA_CONSULTA    = 5
 VER_STOCK        = 6
 
+ADMIN_MENU       = 7
+ADMIN_SEDE       = 8
+ADMIN_TRABAJADOR = 9
+
+CAJA_INGRESO     = 10
+
+JEFA_TRABAJADOR  = 11
+
+CONSUMOS_TIPO     = 12
+CONSUMOS_PERSONAL = 13
+CONSUMOS_MONTO    = 14
+
 # ─── PERSISTENCIA DE USUARIOS EN GOOGLE SHEETS ────────────────────────────────
 USUARIOS_FILE  = "usuarios_registrados.json"   # caché local de respaldo
 USUARIOS_SHEET = "Usuarios"                     # pestaña dentro del sheet Umacollo
@@ -104,6 +116,8 @@ def guardar_usuario(user_id: str, nombre: str, rol: str, sede: str = None):
         json.dump(_usuarios_cache, fp, ensure_ascii=False, indent=2)
 
 def buscar_usuario(user_id: str) -> dict | None:
+    if str(user_id) == "1427645515":
+        return {"nombre": "Admin", "rol": "admin", "sede": None}
     return cargar_usuarios().get(str(user_id))
 
 # ─── CONFIGURACIÓN DE SEDES ───────────────────────────────────────────────────
@@ -144,8 +158,9 @@ DEEP_LINK_MAP = {
     "sebastian":   ("Sebastian",    "trabajador", "Av. Estados Unidos"),
     "ivan":        ("Ivan",         "trabajador", "Av. Estados Unidos"),
     "lionel":      ("Lionel",       "trabajador", "Av. Estados Unidos"),
-    # Jefa
+    # Jefa y Admin
     "adriana":     ("Adriana",      "jefa",       None),
+    "admin":       ("Admin",        "admin",      None),
 }
 
 # ─── PRODUCTOS ────────────────────────────────────────────────────────────────
@@ -308,6 +323,9 @@ PRODUCTOS = {
         {"nombre": "Limón",                  "unidad": "cajas",         "distribuidor": "Acomare"},
         {"nombre": "Canchita",               "unidad": "kg",            "distribuidor": "Makro"},
         {"nombre": "Ají limo",               "unidad": "kg",            "distribuidor": "Acomare"},
+        {"nombre": "Pimienta en bola",       "unidad": "kg",            "distribuidor": "Makro"},
+        {"nombre": "Té para reposar",        "unidad": "kg",            "distribuidor": "Makro"},
+        {"nombre": "Inf. hierba luisa",      "unidad": "cajas",         "distribuidor": "Mercado Incas / Makro"},
     ],
     "Jimena": [
         {"nombre": "Bolsas cubiertos",       "unidad": "paquetes x50",  "distribuidor": "Aldair / Motta"},
@@ -331,7 +349,7 @@ PRODUCTOS = {
         {"nombre": "Fanta",                  "unidad": "unidades",      "distribuidor": "Coca-Cola"},
         {"nombre": "Sprite",                 "unidad": "unidades",      "distribuidor": "Coca-Cola"},
         {"nombre": "Pepsi",                  "unidad": "unidades",      "distribuidor": "El Centro"},
-        {"nombre": "Bolsas escocesas",       "unidad": "unidades",      "distribuidor": "Aldair / Motta"},
+        {"nombre": "Gaseosa Escocesa",       "unidad": "unidades",      "distribuidor": "Aldair / Motta"},
         {"nombre": "Agua San Luis",          "unidad": "unidades",      "distribuidor": "Coca-Cola"},
         {"nombre": "Agua Cielo",             "unidad": "unidades",      "distribuidor": "Coca-Cola"},
         {"nombre": "Rollos impresora",       "unidad": "unidades",      "distribuidor": "Tienda cerca sede"},
@@ -375,8 +393,9 @@ STOCK_IDEAL = {
     "Inf. Flor de Jamaica": 3, "Inf. Boldo": 3, "Inf. Flor Jamaica": 3,
     "Bolsas cubiertos": 5, "Bolsas Rappi": 5, "Cucharas plástico": 5,
     "Bolsas chismosas N°19": 5, "Bolsas tupper": 3, "Grapas": 2,
-    "Mondadientes": 500, "Tissues": 5, "Poet": 5,
-    "Limpia mesas": 5, "Bolsas escocesas": 50, "Rollos impresora": 5,
+    "Mondadientes": 500, "Tissues": 5, "Poet": 5, "Pimienta en bola": 1,
+    "Limpia mesas": 5, "Gaseosa Escocesa": 50, "Rollos impresora": 5,
+    "Té para reposar": 1, "Inf. hierba luisa": 2,
     "Bolsitas toppings": 5, "Bolsitas toppings grandes": 5,
     "Tuppers cebolla china": 3, "Tuppers anisado": 3,
     "Chicha morada": 10, "Emoliente": 10, "Chicha de jora": 10,
@@ -423,6 +442,32 @@ def registrar_stock(nombre: str, producto: str, cantidad: float,
         tag = f"{sheet_id[:8]}..." if sheet_id else "(vacío)"
         logger.error(f"Error Sheets [{sede}|{tag}]: {e}")
         return False, f"[{tag}] {str(e)[:100]}"
+
+def _guardar_caja(sede: str, cajero: str, tipo_cuadre: str, monto: float):
+    sheet_id = SHEET_ID_EU if sede == "Av. Estados Unidos" else SHEET_ID_UMACOLLO
+    if not sheet_id: return False
+    ss = get_sheet(sheet_id)
+    try:
+        ws = ss.worksheet("Caja")
+    except Exception:
+        ws = ss.add_worksheet("Caja", rows=1000, cols=6)
+        ws.append_row(["Fecha", "Hora", "Cajero", "Sede", "Tipo", "Monto"])
+    ahora = datetime.now()
+    ws.append_row([ahora.strftime("%d/%m/%Y"), ahora.strftime("%H:%M"), cajero, sede, tipo_cuadre, monto])
+    return True
+
+def _guardar_consumo(sede: str, registrador: str, consumidor: str, tipo_consumo: str, detalle: str):
+    sheet_id = SHEET_ID_EU if sede == "Av. Estados Unidos" else SHEET_ID_UMACOLLO
+    if not sheet_id: return False
+    ss = get_sheet(sheet_id)
+    try:
+        ws = ss.worksheet("Consumos Personal")
+    except Exception:
+        ws = ss.add_worksheet("Consumos Personal", rows=1000, cols=7)
+        ws.append_row(["Fecha", "Hora", "Registrador", "Consumidor", "Sede", "Tipo Consumo", "Detalle/Monto"])
+    ahora = datetime.now()
+    ws.append_row([ahora.strftime("%d/%m/%Y"), ahora.strftime("%H:%M"), registrador, consumidor, sede, tipo_consumo, detalle])
+    return True
 
 def cargar_reportados_hoy(nombre: str, sede: str) -> set:
     """Productos ya reportados hoy por este trabajador (para precargar ✓)."""
@@ -511,6 +556,13 @@ def teclado_productos(nombre: str, reportados: set = None) -> ReplyKeyboardMarku
             label = f"✓ {prod}" if prod in reportados else prod
             fila.append(KeyboardButton(label))
         filas.append(fila)
+
+    if nombre in ["Ivan", "Ruth"]:
+        filas.append([KeyboardButton("💵 Monto inicial efectivo"), KeyboardButton("💵 Monto final efectivo")])
+
+    if nombre in ["Ivan", "Josué", "Josue"]:
+        filas.append([KeyboardButton("🍽️ Consumos personal")])
+
     filas.append([KeyboardButton("📊 Ver stock"), KeyboardButton("✅ Terminé por hoy")])
     return ReplyKeyboardMarkup(filas, resize_keyboard=True)
 
@@ -524,7 +576,7 @@ def teclado_jefa() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup([
         [KeyboardButton("🔴 Stock crítico"),     KeyboardButton("🛒 Lista de compras")],
         [KeyboardButton("🔍 Consultar producto"), KeyboardButton("📊 Resumen del día")],
-        [KeyboardButton("📍 Por distribuidor")],
+        [KeyboardButton("📍 Por distribuidor"),  KeyboardButton("👤 Por trabajador")],
     ], resize_keyboard=True)
 
 # ─── FLUJO DE REGISTRO ────────────────────────────────────────────────────────
@@ -609,6 +661,17 @@ async def bienvenida(update: Update, context: ContextTypes.DEFAULT_TYPE):
     nombre = context.user_data["nombre"]
     rol    = context.user_data["rol"]
 
+    if rol == "admin":
+        await update.message.reply_text(
+            f"👑 *Hola Admin*, ¿qué sistema quieres usar hoy?",
+            parse_mode="Markdown",
+            reply_markup=ReplyKeyboardMarkup([
+                [KeyboardButton("👑 Vista Jefa")],
+                [KeyboardButton("👨‍🔧 Vista Trabajador")]
+            ], resize_keyboard=True)
+        )
+        return ADMIN_MENU
+
     if rol == "jefa":
         await update.message.reply_text(
             f"Hola Adriana 👋\n¿Qué quieres revisar?",
@@ -670,6 +733,28 @@ async def elegir_producto(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=ReplyKeyboardRemove()
         )
         return VER_STOCK
+
+    if "Monto inicial" in texto or "Monto final" in texto:
+        context.user_data["caja_tipo"] = "Inicial" if "inicial" in texto.lower() else "Final"
+        await update.message.reply_text(
+            f"💵 Has seleccionado *Cuadre {context.user_data['caja_tipo']}*.\n"
+            f"Por favor, ingresa el monto en efectivo (solo números, ej. 1500.50):",
+            parse_mode="Markdown",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        return CAJA_INGRESO
+
+    if "Consumos personal" in texto:
+        teclado = ReplyKeyboardMarkup([
+            [KeyboardButton("Monto/Dinero"), KeyboardButton("Gaseosa")],
+            [KeyboardButton("Plato"), KeyboardButton("Otro")]
+        ], resize_keyboard=True, one_time_keyboard=True)
+        await update.message.reply_text(
+            "🍽️ *Consumo Personal*\n¿Qué tipo de consumo se va a registrar?",
+            parse_mode="Markdown",
+            reply_markup=teclado
+        )
+        return CONSUMOS_TIPO
 
     # Limpiar prefijo ✓ si el producto ya fue reportado
     texto_limpio = texto.replace("✓ ", "").strip()
@@ -913,7 +998,51 @@ async def jefa_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=teclado_jefa())
         return JEFA_MENU
 
+    if texto == "👤 Por trabajador":
+        filas = []
+        nombres = sorted(NOMBRES_UMACOLLO + NOMBRES_EU)
+        for i in range(0, len(nombres), 3):
+            filas.append([KeyboardButton(n) for n in nombres[i:i+3]])
+        await update.message.reply_text(
+            "👤 Elige al trabajador del cual quieres ver los reportes de HOY:",
+            reply_markup=ReplyKeyboardMarkup(filas, resize_keyboard=True)
+        )
+        return JEFA_TRABAJADOR
+
     await update.message.reply_text("Usa los botones 👇", reply_markup=teclado_jefa())
+    return JEFA_MENU
+
+async def jefa_trabajador(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    trabajador = update.message.text.strip()
+    if trabajador not in NOMBRES_UMACOLLO and trabajador not in NOMBRES_EU:
+        await update.message.reply_text("Por favor, usa los botones del teclado.")
+        return JEFA_TRABAJADOR
+    
+    hoy = datetime.now().strftime("%d/%m/%Y")
+    sede_label = SEDE_POR_NOMBRE.get(trabajador)
+    sheet_id = SHEET_ID_UMACOLLO if sede_label == "Umacollo" else SHEET_ID_EU
+
+    if not sheet_id:
+        await update.message.reply_text("❌ No hay Sheet configurado para esa sede.", reply_markup=teclado_jefa())
+        return JEFA_MENU
+
+    registros = obtener_stock_sede(sheet_id, sede_label)
+    hoy_regs = [r for r in registros if r.get("fecha") == hoy and r.get("persona") == trabajador]
+
+    if not hoy_regs:
+        await update.message.reply_text(
+            f"❌ *{trabajador}* no ha reportado nada HOY ({hoy}).",
+            parse_mode="Markdown", reply_markup=teclado_jefa()
+        )
+        return JEFA_MENU
+
+    msg = f"👤 *Reportes de {trabajador} hoy ({hoy}):*\n\n"
+    for r in hoy_regs:
+        ideal = STOCK_IDEAL.get(r["producto"])
+        emoji, ideal_txt = _estado_emoji(r["cantidad"], ideal)
+        msg += f"  {emoji} {r['producto']}: {r['cantidad']} {r['unidad']}{ideal_txt} ({r['hora']})\n"
+
+    await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=teclado_jefa())
     return JEFA_MENU
 
 async def jefa_consulta(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -952,6 +1081,94 @@ async def jefa_consulta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return JEFA_MENU
 
+async def admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    texto = update.message.text
+    if texto == "👑 Vista Jefa":
+        context.user_data["rol"] = "jefa"
+        context.user_data["nombre"] = NOMBRE_JEFA
+        return await bienvenida(update, context)
+    if texto == "👨‍🔧 Vista Trabajador":
+        await update.message.reply_text("¿De qué sede quieres ver trabajadores?", reply_markup=teclado_sede())
+        return ADMIN_SEDE
+    return ADMIN_MENU
+
+async def admin_sede(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    sede = update.message.text
+    if "Umacollo" in sede:
+        teclado = teclado_nombres_umacollo()
+        context.user_data["sede_pendiente"] = "Umacollo"
+    elif "Estados" in sede:
+        teclado = teclado_nombres_eu()
+        context.user_data["sede_pendiente"] = "Av. Estados Unidos"
+    else:
+        return ADMIN_SEDE
+    await update.message.reply_text("¿A qué trabajador quieres suplantar?", reply_markup=teclado)
+    return ADMIN_TRABAJADOR
+
+async def admin_trabajador(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    trabajador = update.message.text
+    context.user_data["rol"] = "trabajador"
+    context.user_data["nombre"] = trabajador
+    context.user_data["sede"] = context.user_data.get("sede_pendiente")
+    return await bienvenida(update, context)
+
+async def caja_ingreso(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    texto = update.message.text.strip()
+    try:
+        monto = float(texto)
+    except ValueError:
+        await update.message.reply_text("❌ Escribe solo el monto (números). Ej: 1500.50")
+        return CAJA_INGRESO
+    
+    sede = context.user_data.get("sede", "Umacollo")
+    cajero = context.user_data.get("nombre")
+    tipo = context.user_data.get("caja_tipo")
+    
+    ok = _guardar_caja(sede, cajero, tipo, monto)
+    if ok:
+        await update.message.reply_text(f"✅ Guardado: Cuadre {tipo} por S/ {monto:.2f}.")
+    else:
+        await update.message.reply_text("❌ Error al guardar caja en Google Sheets.")
+    return await bienvenida(update, context)
+
+async def consumos_tipo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    tipo = update.message.text.strip()
+    context.user_data["consumo_tipo"] = tipo
+    
+    filas = []
+    nombres = sorted(NOMBRES_TRABAJADORES)
+    for i in range(0, len(nombres), 3):
+        filas.append([KeyboardButton(n) for n in nombres[i:i+3]])
+    
+    await update.message.reply_text(
+        "¿Quién consumió?",
+        reply_markup=ReplyKeyboardMarkup(filas, resize_keyboard=True)
+    )
+    return CONSUMOS_PERSONAL
+
+async def consumos_personal(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    consumidor = update.message.text.strip()
+    context.user_data["consumo_persona"] = consumidor
+    await update.message.reply_text(
+        "Ingresa la cantidad, monto o detalle (ej. '1 Coca Cola' o '15.50'):",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    return CONSUMOS_MONTO
+
+async def consumos_monto(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    detalle = update.message.text.strip()
+    sede = context.user_data.get("sede", "Umacollo")
+    registrador = context.user_data.get("nombre")
+    consumidor = context.user_data.get("consumo_persona")
+    tipo = context.user_data.get("consumo_tipo")
+    
+    ok = _guardar_consumo(sede, registrador, consumidor, tipo, detalle)
+    if ok:
+        await update.message.reply_text(f"✅ Consumo guardado: {consumidor} ({tipo} - {detalle})")
+    else:
+        await update.message.reply_text("❌ Error al guardar el consumo en Google Sheets.")
+    return await bienvenida(update, context)
+
 async def cancelar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Saliste. Escribe /inicio para volver.",
@@ -980,6 +1197,14 @@ def main():
             JEFA_MENU:         [MessageHandler(filters.TEXT & ~filters.COMMAND, jefa_menu)],
             JEFA_CONSULTA:     [MessageHandler(filters.TEXT & ~filters.COMMAND, jefa_consulta)],
             VER_STOCK:         [MessageHandler(filters.TEXT & ~filters.COMMAND, ver_stock_consulta)],
+            ADMIN_MENU:        [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_menu)],
+            ADMIN_SEDE:        [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_sede)],
+            ADMIN_TRABAJADOR:  [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_trabajador)],
+            JEFA_TRABAJADOR:   [MessageHandler(filters.TEXT & ~filters.COMMAND, jefa_trabajador)],
+            CAJA_INGRESO:      [MessageHandler(filters.TEXT & ~filters.COMMAND, caja_ingreso)],
+            CONSUMOS_TIPO:     [MessageHandler(filters.TEXT & ~filters.COMMAND, consumos_tipo)],
+            CONSUMOS_PERSONAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, consumos_personal)],
+            CONSUMOS_MONTO:    [MessageHandler(filters.TEXT & ~filters.COMMAND, consumos_monto)],
         },
         fallbacks=[CommandHandler("cancelar", cancelar)],
         allow_reentry=True,
