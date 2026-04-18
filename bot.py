@@ -1027,20 +1027,20 @@ async def jefa_trabajador(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return JEFA_MENU
 
     registros = obtener_stock_sede(sheet_id, sede_label)
-    hoy_regs = [r for r in registros if r.get("fecha") == hoy and r.get("persona") == trabajador]
+    trabajador_regs = [r for r in registros if r.get("persona") == trabajador]
 
-    if not hoy_regs:
+    if not trabajador_regs:
         await update.message.reply_text(
-            f"❌ *{trabajador}* no ha reportado nada HOY ({hoy}).",
+            f"❌ *{trabajador}* no tiene ningún producto reportado recientemente.",
             parse_mode="Markdown", reply_markup=teclado_jefa()
         )
         return JEFA_MENU
 
-    msg = f"👤 *Reportes de {trabajador} hoy ({hoy}):*\n\n"
-    for r in hoy_regs:
+    msg = f"👤 *Últimos reportes de {trabajador}:*\n\n"
+    for r in trabajador_regs:
         ideal = STOCK_IDEAL.get(r["producto"])
         emoji, ideal_txt = _estado_emoji(r["cantidad"], ideal)
-        msg += f"  {emoji} {r['producto']}: {r['cantidad']} {r['unidad']}{ideal_txt} ({r['hora']})\n"
+        msg += f"  {emoji} {r['producto']}: {r['cantidad']} {r['unidad']}{ideal_txt}\n    _({r['fecha']} a las {r['hora']})_\n\n"
 
     await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=teclado_jefa())
     return JEFA_MENU
