@@ -1,7 +1,11 @@
 import os
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, time, timedelta
+import pytz
+
+def get_now():
+    return datetime.now(pytz.timezone('America/Lima'))
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
@@ -33,6 +37,7 @@ JEFA_TRABAJADOR  = 11
 CONSUMOS_TIPO     = 12
 CONSUMOS_PERSONAL = 13
 CONSUMOS_MONTO    = 14
+JEFA_CATEGORIA_ELEGIR = 15
 
 # ─── PERSISTENCIA DE USUARIOS EN GOOGLE SHEETS ────────────────────────────────
 USUARIOS_FILE  = "usuarios_registrados.json"   # caché local de respaldo
@@ -367,7 +372,7 @@ PRODUCTOS = {
 # ─── STOCK IDEAL ──────────────────────────────────────────────────────────────
 STOCK_IDEAL = {
     # Umacollo
-    "Papa": 1.5, "Zanahoria": 6, "Kion": 6, "Rocoto": 4, "Ají limo": 0.5,
+    "Papa": 1.5, "Zanahoria": 6, "Kion": 6, "Rocoto": 4, "Ají limo": 250,
     "Limón": 1, "Huevos": 18, "Culantro": 1, "Cebolla china": 1, "Maracuyá": 5,
     "Maíz morado": 3, "Fideo": 12, "Sal": 12, "Aceite": 20, "Mantequilla": 0.5,
     "Gallinas congeladas": 50, "Pollos congelados": 10, "Cerdo": 5, "Concho": 3,
@@ -431,7 +436,7 @@ def registrar_stock(nombre: str, producto: str, cantidad: float,
         return False, msg
     try:
         hoja = _get_o_crear_registros(sheet_id)
-        ahora = datetime.now()
+        ahora = get_now()
         hoja.append_row([
             ahora.strftime("%d/%m/%Y"),
             ahora.strftime("%H:%M"),
@@ -452,7 +457,7 @@ def _guardar_caja(sede: str, cajero: str, tipo_cuadre: str, monto: float):
     except Exception:
         ws = ss.add_worksheet("Caja", rows=1000, cols=6)
         ws.append_row(["Fecha", "Hora", "Cajero", "Sede", "Tipo", "Monto"])
-    ahora = datetime.now()
+    ahora = get_now()
     ws.append_row([ahora.strftime("%d/%m/%Y"), ahora.strftime("%H:%M"), cajero, sede, tipo_cuadre, monto])
     return True
 
@@ -465,14 +470,14 @@ def _guardar_consumo(sede: str, registrador: str, consumidor: str, tipo_consumo:
     except Exception:
         ws = ss.add_worksheet("Consumos Personal", rows=1000, cols=7)
         ws.append_row(["Fecha", "Hora", "Registrador", "Consumidor", "Sede", "Tipo Consumo", "Detalle/Monto"])
-    ahora = datetime.now()
+    ahora = get_now()
     ws.append_row([ahora.strftime("%d/%m/%Y"), ahora.strftime("%H:%M"), registrador, consumidor, sede, tipo_consumo, detalle])
     return True
 
 def cargar_reportados_hoy(nombre: str, sede: str) -> set:
     """Productos ya reportados hoy por este trabajador (para precargar ✓)."""
     try:
-        hoy = datetime.now().strftime("%d/%m/%Y")
+        hoy = get_now().strftime("%d/%m/%Y")
         sheet_id = SHEET_ID_EU if sede == "Av. Estados Unidos" else SHEET_ID_UMACOLLO
         if not sheet_id:
             return set()
@@ -519,6 +524,20 @@ def obtener_stock_actual(busqueda: str = None) -> list:
     return obtener_stock_combinado(busqueda)
 
 # ─── HELPERS ──────────────────────────────────────────────────────────────────
+def _get_categoria(prod: str) -> str:
+    p = prod.lower()
+    if any(x in p for x in ["bolsa", "tupper", "vaso", "cuchara", "malla", "grapa", "rollo", "toca", "guante"]):
+        return "Plásticos y Empaques"
+    if any(x in p for x in ["coca", "inca", "fanta", "sprite", "escocesa", "agua", "pepsi", "chicha", "emoliente", "maracuyá"]):
+        return "Bebidas"
+    if any(x in p for x in ["té", "anís", "cedrón", "muña", "jamaica", "boldo", "hierba luisa"]):
+        return "Infusiones"
+    if any(x in p for x in ["pollo", "gallina", "cerdo", "huevos", "concho"]):
+        return "Carnes / Pollos"
+    if any(x in p for x in ["papa", "zanahoria", "kion", "rocoto", "limón", "limon", "cebolla", "culantro", "poro", "apio", "ajo", "ají"]):
+        return "Verduras"
+    return "Abarrotes y Otros"
+
 def _estado_emoji(cant, ideal):
     if not ideal:
         return "📦", ""
@@ -575,6 +594,7 @@ def teclado_confirmacion(cantidad: str, unidad: str) -> ReplyKeyboardMarkup:
 def teclado_jefa() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup([
         [KeyboardButton("🔴 Stock crítico"),     KeyboardButton("🛒 Lista de compras")],
+        [KeyboardButton("📋 Estado General"),   KeyboardButton("📂 Por Categoría")],
         [KeyboardButton("🔍 Consultar producto"), KeyboardButton("📊 Resumen del día")],
         [KeyboardButton("📍 Por distribuidor"),  KeyboardButton("👤 Por trabajador")],
     ], resize_keyboard=True)
@@ -893,7 +913,8 @@ async def jefa_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if texto == "🔴 Stock crítico":
         registros = obtener_stock_combinado()
-        criticos, bajos = [], []
+        criticos_dict, bajos_dict = {}, {}
+        
         for r in registros:
             ideal = STOCK_IDEAL.get(r["producto"])
             if not ideal:
@@ -902,20 +923,30 @@ async def jefa_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 cant = float(r["cantidad"])
             except Exception:
                 continue
-            sede_tag = f"[{r['sede']}]"
+            
+            prod = r["producto"]
+            unidad = r["unidad"]
             if cant < ideal * 0.50:
-                criticos.append(f"🔴 {r['producto']} {sede_tag}: {cant} {r['unidad']} (ideal: {ideal})")
+                if prod not in criticos_dict: criticos_dict[prod] = {"ideal": ideal, "sedes": []}
+                criticos_dict[prod]["sedes"].append(f"    📍 {r['sede']}: {cant} {unidad}")
             elif cant < ideal * 0.90:
-                bajos.append(f"🟡 {r['producto']} {sede_tag}: {cant} {r['unidad']} (ideal: {ideal})")
+                if prod not in bajos_dict: bajos_dict[prod] = {"ideal": ideal, "sedes": []}
+                bajos_dict[prod]["sedes"].append(f"    📍 {r['sede']}: {cant} {unidad}")
 
-        if not criticos and not bajos:
+        if not criticos_dict and not bajos_dict:
             msg = "✅ Todo el stock está bien en ambas sedes."
         else:
             msg = ""
-            if criticos:
-                msg += "*🔴 Crítico — comprar HOY:*\n" + "\n".join(criticos) + "\n\n"
-            if bajos:
-                msg += "*🟡 Bajo — comprar esta semana:*\n" + "\n".join(bajos)
+            if criticos_dict:
+                msg += "*🔴 Crítico — comprar HOY:*\n"
+                for prod, data in criticos_dict.items():
+                    msg += f"🔴 *{prod}* (Ideal: {data['ideal']})\n" + "\n".join(data["sedes"]) + "\n"
+                msg += "\n"
+            if bajos_dict:
+                msg += "*🟡 Bajo — comprar esta semana:*\n"
+                for prod, data in bajos_dict.items():
+                    msg += f"🟡 *{prod}* (Ideal: {data['ideal']})\n" + "\n".join(data["sedes"]) + "\n"
+                    
         await update.message.reply_text(
             msg.strip() or "✅ Todo bien.", parse_mode="Markdown",
             reply_markup=teclado_jefa()
@@ -938,7 +969,7 @@ async def jefa_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 falta = round(ideal - cant, 2)
                 emoji = "🔴" if cant < ideal * 0.50 else "🟡"
                 por_dist.setdefault(dist, []).append(
-                    f"  {emoji} {r['producto']} [{r['sede']}]: {falta} {r['unidad']}"
+                    f"  {emoji} {r['producto']} [{r['sede']}]: faltan {falta} {r['unidad']} (Ideal: {ideal})"
                 )
         if not por_dist:
             msg = "✅ No hay nada urgente que comprar."
@@ -949,8 +980,42 @@ async def jefa_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=teclado_jefa())
         return JEFA_MENU
 
+    if texto == "📋 Estado General":
+        hoy = get_now().strftime("%d/%m/%Y")
+        registros = obtener_stock_combinado()
+        hoy_reportados = { (r["persona"], r["producto"]) for r in registros if r.get("fecha") == hoy }
+        
+        msg = f"📋 *Auditoría de Reportes de Hoy ({hoy})*\n\n"
+        for trabajador, prods in PRODUCTOS.items():
+            msg += f"👤 *{trabajador}*\n"
+            for p in prods:
+                prod_name = p["nombre"]
+                estado = "✅" if (trabajador, prod_name) in hoy_reportados else "👀"
+                msg += f"  {estado} {prod_name}\n"
+            msg += "\n"
+            
+        if len(msg) > 4000:
+            partes = msg.split("\n\n")
+            mitad = len(partes) // 2
+            m1 = "\n\n".join(partes[:mitad])
+            m2 = "\n\n".join(partes[mitad:])
+            await update.message.reply_text(m1, parse_mode="Markdown")
+            await update.message.reply_text(m2, parse_mode="Markdown", reply_markup=teclado_jefa())
+        else:
+            await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=teclado_jefa())
+        return JEFA_MENU
+
+    if texto == "📂 Por Categoría":
+        teclado = ReplyKeyboardMarkup([
+            [KeyboardButton("Plásticos y Empaques"), KeyboardButton("Bebidas")],
+            [KeyboardButton("Infusiones"), KeyboardButton("Carnes / Pollos")],
+            [KeyboardButton("Verduras"), KeyboardButton("Abarrotes y Otros")],
+        ], resize_keyboard=True, one_time_keyboard=True)
+        await update.message.reply_text("📂 ¿Qué categoría quieres revisar?", reply_markup=teclado)
+        return JEFA_CATEGORIA_ELEGIR
+
     if texto == "📊 Resumen del día":
-        hoy = datetime.now().strftime("%d/%m/%Y")
+        hoy = get_now().strftime("%d/%m/%Y")
         msg = f"📊 *Resumen {hoy}*\n"
 
         for sede_label, sheet_id in [("Umacollo", SHEET_ID_UMACOLLO),
@@ -1018,7 +1083,7 @@ async def jefa_trabajador(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Por favor, usa los botones del teclado.")
         return JEFA_TRABAJADOR
     
-    hoy = datetime.now().strftime("%d/%m/%Y")
+    hoy = get_now().strftime("%d/%m/%Y")
     sede_label = SEDE_POR_NOMBRE.get(trabajador)
     sheet_id = SHEET_ID_UMACOLLO if sede_label == "Umacollo" else SHEET_ID_EU
 
@@ -1079,6 +1144,30 @@ async def jefa_consulta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         msg.strip(), parse_mode="Markdown", reply_markup=teclado_jefa()
     )
+    return JEFA_MENU
+
+async def jefa_categoria_elegir(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    cat_elegida = update.message.text
+    registros = obtener_stock_combinado()
+    
+    cat_registros = []
+    for r in registros:
+        if _get_categoria(r["producto"]) == cat_elegida:
+            cat_registros.append(r)
+            
+    if not cat_registros:
+        await update.message.reply_text(f"❌ No hay productos en la categoría: *{cat_elegida}*", parse_mode="Markdown", reply_markup=teclado_jefa())
+        return JEFA_MENU
+        
+    msg = f"📂 *Categoría: {cat_elegida}*\n\n"
+    for r in cat_registros:
+        msg += f"• {r['producto']} [{r['sede']}] -> {r['cantidad']} {r['unidad']}\n  🚚 Pedir a: {r['distribuidor']}\n\n"
+        
+    if len(msg) > 4000:
+        await update.message.reply_text(msg[:4000], parse_mode="Markdown")
+        await update.message.reply_text("...(la lista es más larga, usa consultas específicas si necesitas más info)", reply_markup=teclado_jefa())
+    else:
+        await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=teclado_jefa())
     return JEFA_MENU
 
 async def admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1176,6 +1265,43 @@ async def cancelar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return ConversationHandler.END
 
+async def recordatorio_diario(context: ContextTypes.DEFAULT_TYPE):
+    hoy = get_now().strftime("%d/%m/%Y")
+    registros = obtener_stock_combinado()
+    hoy_reportados = { (r["persona"], r["producto"]) for r in registros if r.get("fecha") == hoy }
+    
+    msg_jefa = f"⏰ *Reporte de Cierre de Jornada ({hoy} - 9:00 PM)*\n\n"
+    usuarios = cargar_usuarios()
+    nombre_to_id = {u["nombre"]: uid for uid, u in usuarios.items() if u["rol"] == "trabajador"}
+    jefa_id = "1427645515" 
+    
+    for trabajador, prods in PRODUCTOS.items():
+        faltantes = []
+        hechos = 0
+        total = len(prods)
+        for p in prods:
+            if (trabajador, p["nombre"]) in hoy_reportados:
+                hechos += 1
+            else:
+                faltantes.append(p["nombre"])
+                
+        if faltantes:
+            msg_jefa += f"👤 *{trabajador}*: Llenó {hechos}/{total}.\n  ⚠️ Faltan: {', '.join(faltantes)}\n\n"
+        else:
+            msg_jefa += f"👤 *{trabajador}*: Completó TODO ({hechos}/{total}) ✅\n\n"
+            
+        if faltantes and trabajador in nombre_to_id:
+            msg_worker = f"⚠️ *Recordatorio de Cierre*\nHola {trabajador}, aún te faltan {len(faltantes)} productos por reportar hoy:\n- " + "\n- ".join(faltantes) + "\n\n¡Entra a /inicio y repórtalos!"
+            try:
+                await context.bot.send_message(chat_id=nombre_to_id[trabajador], text=msg_worker, parse_mode="Markdown")
+            except Exception as e:
+                logger.error(f"Error mandando recordatorio a {trabajador}: {e}")
+                
+    try:
+        await context.bot.send_message(chat_id=jefa_id, text=msg_jefa, parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"Error mandando resumen a la Jefa: {e}")
+
 # ─── MAIN ─────────────────────────────────────────────────────────────────────
 def main():
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -1205,13 +1331,18 @@ def main():
             CONSUMOS_TIPO:     [MessageHandler(filters.TEXT & ~filters.COMMAND, consumos_tipo)],
             CONSUMOS_PERSONAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, consumos_personal)],
             CONSUMOS_MONTO:    [MessageHandler(filters.TEXT & ~filters.COMMAND, consumos_monto)],
+            JEFA_CATEGORIA_ELEGIR: [MessageHandler(filters.TEXT & ~filters.COMMAND, jefa_categoria_elegir)],
         },
         fallbacks=[CommandHandler("cancelar", cancelar)],
         allow_reentry=True,
     )
 
     app.add_handler(conv)
-    logger.info("Bot iniciado ✅ — Umacollo + Av. Estados Unidos")
+    
+    t = time(hour=21, minute=0, tzinfo=pytz.timezone('America/Lima'))
+    app.job_queue.run_daily(recordatorio_diario, t)
+    
+    logger.info("Bot iniciado ✅ — Umacollo + Av. Estados Unidos (con tareas a las 9 PM)")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
