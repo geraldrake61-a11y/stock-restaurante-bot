@@ -1008,28 +1008,32 @@ async def jefa_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if texto == "🛒 Lista de compras":
         registros = obtener_stock_combinado()
-        por_dist  = {}
+        por_dist = {}
         for r in registros:
             ideal = STOCK_IDEAL.get(r["producto"])
-            if not ideal:
-                continue
-            try:
-                cant = float(r["cantidad"])
-            except Exception:
-                continue
+            if not ideal: continue
+            try: cant = float(r["cantidad"])
+            except Exception: continue
+            
             if cant < ideal * 0.90:
-                dist  = r["distribuidor"]
+                dist = r["distribuidor"]
+                prod = r["producto"]
                 falta = round(ideal - cant, 2)
                 emoji = "🔴" if cant < ideal * 0.50 else "🟡"
-                por_dist.setdefault(dist, []).append(
-                    f"  {emoji} {r['producto']} [{r['sede']}]: faltan {falta} {r['unidad']} (Ideal: {ideal})"
-                )
+                
+                if dist not in por_dist: por_dist[dist] = {}
+                if prod not in por_dist[dist]: por_dist[dist][prod] = {"ideal": ideal, "sedes": []}
+                
+                por_dist[dist][prod]["sedes"].append(f"      {emoji} 📍 {r['sede']}: faltan {falta} {r['unidad']}")
+                
         if not por_dist:
             msg = "✅ No hay nada urgente que comprar."
         else:
-            msg = "*🛒 Lista de compras por lugar:*\n"
-            for dist in sorted(por_dist):
-                msg += f"\n📍 *{dist}*\n" + "\n".join(por_dist[dist])
+            msg = "*🛒 Lista de compras por Distribuidor:*\n"
+            for dist in sorted(por_dist.keys()):
+                msg += f"\n🚚 *{dist}*\n"
+                for prod, data in sorted(por_dist[dist].items()):
+                    msg += f"  📦 *{prod}* (Ideal: {data['ideal']})\n" + "\n".join(data["sedes"]) + "\n"
         await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=teclado_jefa())
         return JEFA_MENU
 
@@ -1097,28 +1101,31 @@ async def jefa_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if texto == "📍 Por distribuidor":
         registros = obtener_stock_combinado()
-        por_dist  = {}
+        por_dist = {}
         for r in registros:
-            ideal = STOCK_IDEAL.get(r["producto"])
-            if not ideal:
-                continue
-            try:
-                cant = float(r["cantidad"])
-            except Exception:
-                continue
-            if cant < ideal * 0.90:
-                dist  = r["distribuidor"]
-                emoji = "🔴" if cant < ideal * 0.50 else "🟡"
-                por_dist.setdefault(dist, []).append(
-                    f"  {emoji} {r['producto']} [{r['sede']}]: {cant}/{ideal} {r['unidad']}"
-                )
+            dist = r["distribuidor"]
+            prod = r["producto"]
+            if dist not in por_dist: por_dist[dist] = {}
+            if prod not in por_dist[dist]: por_dist[dist][prod] = []
+            
+            ideal = STOCK_IDEAL.get(prod)
+            emoji, ideal_txt = _estado_emoji(r["cantidad"], ideal)
+            por_dist[dist][prod].append(f"      {emoji} 📍 {r['sede']}: {r['cantidad']} {r['unidad']} {ideal_txt}")
+            
         if not por_dist:
-            msg = "✅ Nada urgente por distribuidor."
+            msg = "✅ No hay productos registrados."
         else:
-            msg = "*Por distribuidor:*\n"
-            for dist in sorted(por_dist):
-                msg += f"\n📍 *{dist}*\n" + "\n".join(por_dist[dist])
-        await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=teclado_jefa())
+            msg = "📍 *Stock general organizado por distribuidor:*\n"
+            for dist in sorted(por_dist.keys()):
+                msg += f"\n🚚 *{dist}*\n"
+                for prod, sedes in sorted(por_dist[dist].items()):
+                    msg += f"  📦 *{prod}*\n" + "\n".join(sedes) + "\n"
+                    
+        if len(msg) > 4000:
+            await update.message.reply_text(msg[:4000], parse_mode="Markdown")
+            await update.message.reply_text("...(la lista es más larga)", parse_mode="Markdown", reply_markup=teclado_jefa())
+        else:
+            await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=teclado_jefa())
         return JEFA_MENU
 
     if texto == "👤 Por trabajador":
@@ -1208,18 +1215,24 @@ async def jefa_categoria_elegir(update: Update, context: ContextTypes.DEFAULT_TY
     cat_elegida = update.message.text
     registros = obtener_stock_combinado()
     
-    cat_registros = []
+    agrupado = {}
     for r in registros:
         if _get_categoria(r["producto"]) == cat_elegida:
-            cat_registros.append(r)
+            prod = r["producto"]
+            if prod not in agrupado: agrupado[prod] = {"distribuidor": r["distribuidor"], "sedes": []}
             
-    if not cat_registros:
+            ideal = STOCK_IDEAL.get(prod)
+            emoji, ideal_txt = _estado_emoji(r["cantidad"], ideal)
+            agrupado[prod]["sedes"].append(f"    {emoji} 📍 {r['sede']}: {r['cantidad']} {r['unidad']}")
+            
+    if not agrupado:
         await update.message.reply_text(f"❌ No hay productos en la categoría: *{cat_elegida}*", parse_mode="Markdown", reply_markup=teclado_jefa())
         return JEFA_MENU
         
     msg = f"📂 *Categoría: {cat_elegida}*\n\n"
-    for r in cat_registros:
-        msg += f"• {r['producto']} [{r['sede']}] -> {r['cantidad']} {r['unidad']}\n  🚚 Pedir a: {r['distribuidor']}\n\n"
+    for prod in sorted(agrupado.keys()):
+        data = agrupado[prod]
+        msg += f"📦 *{prod}* (🚚 Pedir a: {data['distribuidor']})\n" + "\n".join(data["sedes"]) + "\n\n"
         
     if len(msg) > 4000:
         await update.message.reply_text(msg[:4000], parse_mode="Markdown")
