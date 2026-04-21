@@ -1,7 +1,14 @@
 import os
 import json
 import logging
+import unicodedata
 from datetime import datetime, time, timedelta
+
+def quitar_tildes(texto: str) -> str:
+    if not texto: return ""
+    texto = texto.lower().strip()
+    return ''.join((c for c in unicodedata.normalize('NFD', texto) if unicodedata.category(c) != 'Mn'))
+
 import pytz
 
 def get_now():
@@ -242,7 +249,7 @@ PRODUCTOS = {
     "Hermes": [
         {"nombre": "Canchita",           "unidad": "kg",            "distribuidor": "Makro"},
         {"nombre": "Coca-Cola",          "unidad": "unidades",      "distribuidor": "Coca-Cola"},
-        {"nombre": "Inca-Cola",          "unidad": "unidades",      "distribuidor": "Coca-Cola"},
+        {"nombre": "Inka Cola",          "unidad": "unidades",      "distribuidor": "Coca-Cola"},
         {"nombre": "Fanta",              "unidad": "unidades",      "distribuidor": "Coca-Cola"},
         {"nombre": "Sprite",             "unidad": "unidades",      "distribuidor": "Coca-Cola"},
         {"nombre": "Agua San Luis",      "unidad": "unidades",      "distribuidor": "Coca-Cola"},
@@ -350,7 +357,7 @@ PRODUCTOS = {
     ],
     "Ivan": [
         {"nombre": "Coca-Cola",              "unidad": "unidades",      "distribuidor": "Coca-Cola"},
-        {"nombre": "Inca-Cola",              "unidad": "unidades",      "distribuidor": "Coca-Cola"},
+        {"nombre": "Inka Cola",              "unidad": "unidades",      "distribuidor": "Coca-Cola"},
         {"nombre": "Fanta",                  "unidad": "unidades",      "distribuidor": "Coca-Cola"},
         {"nombre": "Sprite",                 "unidad": "unidades",      "distribuidor": "Coca-Cola"},
         {"nombre": "Pepsi",                  "unidad": "unidades",      "distribuidor": "El Centro"},
@@ -376,7 +383,7 @@ STOCK_IDEAL = {
     "Limón": 1, "Huevos": 18, "Culantro": 1, "Cebolla china": 1, "Maracuyá": 5,
     "Maíz morado": 3, "Fideo": 12, "Sal": 12, "Aceite": 20, "Mantequilla": 0.5,
     "Gallinas congeladas": 50, "Pollos congelados": 10, "Cerdo": 5, "Concho": 3,
-    "Coca-Cola": 24, "Inca-Cola": 24, "Fanta": 24, "Sprite": 24,
+    "Coca-Cola": 24, "Inka Cola": 24, "Fanta": 24, "Sprite": 24,
     "Agua San Luis": 12, "Agua Cielo": 12, "Pepsi": 24, "Kola escocesa": 24,
     "Tuppers litro": 20, "Tuppers medio litro": 20, "Botellas pequeñas": 100,
     "Botellas grandes": 60, "Guantes negros M": 3, "Guantes blancos M": 3,
@@ -500,7 +507,7 @@ def obtener_stock_sede(sheet_id: str, sede_label: str, busqueda: str = None) -> 
             if len(fila) < 5 or not fila[3]:
                 continue
             prod = fila[3]
-            if busqueda and busqueda.lower() not in prod.lower():
+            if busqueda and quitar_tildes(busqueda) not in quitar_tildes(prod):
                 continue
             ultimo[prod] = {
                 "fecha": fila[0], "hora": fila[1], "persona": fila[2],
@@ -528,7 +535,7 @@ def _get_categoria(prod: str) -> str:
     p = prod.lower()
     if any(x in p for x in ["bolsa", "tupper", "vaso", "cuchara", "malla", "grapa", "rollo", "toca", "guante"]):
         return "Plásticos y Empaques"
-    if any(x in p for x in ["coca", "inca", "fanta", "sprite", "escocesa", "agua", "pepsi", "chicha", "emoliente", "maracuyá"]):
+    if any(x in p for x in ["coca", "inka", "inca", "fanta", "sprite", "escocesa", "agua", "pepsi", "chicha", "emoliente", "maracuyá"]):
         return "Bebidas"
     if any(x in p for x in ["té", "anís", "cedrón", "muña", "jamaica", "boldo", "hierba luisa"]):
         return "Infusiones"
@@ -778,8 +785,9 @@ async def elegir_producto(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Limpiar prefijo ✓ si el producto ya fue reportado
     texto_limpio = texto.replace("✓ ", "").strip()
+    texto_norm = quitar_tildes(texto_limpio)
     productos    = PRODUCTOS.get(nombre, [])
-    prod_obj     = next((p for p in productos if p["nombre"] == texto_limpio), None)
+    prod_obj     = next((p for p in productos if quitar_tildes(p["nombre"]) == texto_norm), None)
 
     if not prod_obj:
         await update.message.reply_text(
@@ -913,7 +921,7 @@ async def jefa_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if texto == "🔴 Stock crítico":
         registros = obtener_stock_combinado()
-        criticos_dict, bajos_dict = {}, {}
+        alertas = {}
         
         for r in registros:
             ideal = STOCK_IDEAL.get(r["producto"])
@@ -926,26 +934,19 @@ async def jefa_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             prod = r["producto"]
             unidad = r["unidad"]
-            if cant < ideal * 0.50:
-                if prod not in criticos_dict: criticos_dict[prod] = {"ideal": ideal, "sedes": []}
-                criticos_dict[prod]["sedes"].append(f"    📍 {r['sede']}: {cant} {unidad}")
-            elif cant < ideal * 0.90:
-                if prod not in bajos_dict: bajos_dict[prod] = {"ideal": ideal, "sedes": []}
-                bajos_dict[prod]["sedes"].append(f"    📍 {r['sede']}: {cant} {unidad}")
+            
+            if cant < ideal * 0.90:
+                emoji = "🔴" if cant < ideal * 0.50 else "🟡"
+                if prod not in alertas: alertas[prod] = {"ideal": ideal, "sedes": []}
+                alertas[prod]["sedes"].append(f"    {emoji} 📍 {r['sede']}: {cant} {unidad}")
 
-        if not criticos_dict and not bajos_dict:
+        if not alertas:
             msg = "✅ Todo el stock está bien en ambas sedes."
         else:
-            msg = ""
-            if criticos_dict:
-                msg += "*🔴 Crítico — comprar HOY:*\n"
-                for prod, data in criticos_dict.items():
-                    msg += f"🔴 *{prod}* (Ideal: {data['ideal']})\n" + "\n".join(data["sedes"]) + "\n"
-                msg += "\n"
-            if bajos_dict:
-                msg += "*🟡 Bajo — comprar esta semana:*\n"
-                for prod, data in bajos_dict.items():
-                    msg += f"🟡 *{prod}* (Ideal: {data['ideal']})\n" + "\n".join(data["sedes"]) + "\n"
+            msg = "🚨 *Stock Crítico y Bajo (Todas las sedes):*\n\n"
+            for prod in sorted(alertas.keys()):
+                data = alertas[prod]
+                msg += f"📦 *{prod}* (Ideal: {data['ideal']})\n" + "\n".join(data["sedes"]) + "\n\n"
                     
         await update.message.reply_text(
             msg.strip() or "✅ Todo bien.", parse_mode="Markdown",
