@@ -481,6 +481,57 @@ def _guardar_consumo(sede: str, registrador: str, consumidor: str, tipo_consumo:
     ws.append_row([ahora.strftime("%d/%m/%Y"), ahora.strftime("%H:%M"), registrador, consumidor, sede, tipo_consumo, detalle])
     return True
 
+def obtener_consumos_semanales() -> str:
+    msg = "🍽️ *Consumo de Personal (Esta Semana)*\n"
+    ahora = get_now()
+    inicio_semana = ahora - timedelta(days=ahora.weekday())
+    inicio_semana = inicio_semana.replace(hour=0, minute=0, second=0, microsecond=0)
+    
+    msg += f"_Desde el Lunes {inicio_semana.strftime('%d/%m/%Y')} hasta hoy_\n\n"
+    
+    resumen_dinero = {}
+    resumen_otros = {}
+    
+    for sede_label, sheet_id in [("Umacollo", SHEET_ID_UMACOLLO), ("Av. Estados Unidos", SHEET_ID_EU)]:
+        if not sheet_id: continue
+        try:
+            ws = get_sheet(sheet_id).worksheet("Consumos Personal")
+            datos = ws.get_all_values()
+            for f in datos[1:]:
+                if len(f) < 7: continue
+                try:
+                    fecha_f = datetime.strptime(f[0], "%d/%m/%Y").replace(tzinfo=pytz.timezone('America/Lima'))
+                except Exception:
+                    continue
+                if fecha_f >= inicio_semana:
+                    consumidor = f[3]
+                    detalle = f[6]
+                    try:
+                        monto = float(detalle.replace("S/", "").replace(",", ".").strip())
+                        resumen_dinero[consumidor] = resumen_dinero.get(consumidor, 0.0) + monto
+                    except ValueError:
+                        resumen_otros.setdefault(consumidor, []).append(detalle)
+        except Exception as e:
+            logger.error(f"Error cargando consumos de {sede_label}: {e}")
+            
+    if not resumen_dinero and not resumen_otros:
+        return msg + "✅ No se registró ningún consumo esta semana."
+        
+    for c, total in sorted(resumen_dinero.items(), key=lambda x: x[1], reverse=True):
+        if total > 0:
+            msg += f"👤 *{c}*: S/ {total:.2f}\n"
+            if c in resumen_otros:
+                for o in resumen_otros[c]:
+                    msg += f"   - {o}\n"
+                    
+    for c, items in resumen_otros.items():
+        if c not in resumen_dinero or resumen_dinero[c] <= 0:
+            msg += f"👤 *{c}*:\n"
+            for o in items:
+                msg += f"   - {o}\n"
+                
+    return msg
+
 def cargar_reportados_hoy(nombre: str, sede: str) -> set:
     """Productos ya reportados hoy por este trabajador (para precargar ✓)."""
     try:
@@ -604,6 +655,7 @@ def teclado_jefa() -> ReplyKeyboardMarkup:
         [KeyboardButton("📋 Estado General"),   KeyboardButton("📂 Por Categoría")],
         [KeyboardButton("🔍 Consultar producto"), KeyboardButton("📊 Resumen del día")],
         [KeyboardButton("📍 Por distribuidor"),  KeyboardButton("👤 Por trabajador")],
+        [KeyboardButton("🍽️ Histórico Consumos")],
     ], resize_keyboard=True)
 
 # ─── FLUJO DE REGISTRO ────────────────────────────────────────────────────────
@@ -1015,6 +1067,11 @@ async def jefa_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📂 ¿Qué categoría quieres revisar?", reply_markup=teclado)
         return JEFA_CATEGORIA_ELEGIR
 
+    if texto == "🍽️ Histórico Consumos":
+        msg = obtener_consumos_semanales()
+        await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=teclado_jefa())
+        return JEFA_MENU
+
     if texto == "📊 Resumen del día":
         hoy = get_now().strftime("%d/%m/%Y")
         msg = f"📊 *Resumen {hoy}*\n"
@@ -1303,6 +1360,14 @@ async def recordatorio_diario(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Error mandando resumen a la Jefa: {e}")
 
+async def reporte_semanal_consumos(context: ContextTypes.DEFAULT_TYPE):
+    msg = obtener_consumos_semanales()
+    jefa_id = "1427645515" 
+    try:
+        await context.bot.send_message(chat_id=jefa_id, text=msg, parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"Error mandando reporte semanal consumos a la Jefa: {e}")
+
 # ─── MAIN ─────────────────────────────────────────────────────────────────────
 def main():
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -1342,6 +1407,9 @@ def main():
     
     t = time(hour=21, minute=0, tzinfo=pytz.timezone('America/Lima'))
     app.job_queue.run_daily(recordatorio_diario, t)
+    
+    t_domingo = time(hour=20, minute=0, tzinfo=pytz.timezone('America/Lima'))
+    app.job_queue.run_daily(reporte_semanal_consumos, t_domingo, days=(6,))
     
     logger.info("Bot iniciado ✅ — Umacollo + Av. Estados Unidos (con tareas a las 9 PM)")
     app.run_polling(drop_pending_updates=True)
