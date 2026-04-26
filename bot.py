@@ -294,7 +294,7 @@ PRODUCTOS = {
     "María Vargas": [
         {"nombre": "Conteo papas jornada","unidad": "unidades",     "distribuidor": "—"},
         {"nombre": "Huevos jornada",     "unidad": "unidades",      "distribuidor": "—"},
-        {"nombre": "Guantes blancos M",  "unidad": "pares",         "distribuidor": "Aldair / Motta"},
+        {"nombre": "Guantes blancos M",  "unidad": "cajas",         "distribuidor": "Aldair / Motta"},
         {"nombre": "Tocas",              "unidad": "unidades",      "distribuidor": "Aldair / Motta"},
     ],
     "Brendali": [
@@ -652,6 +652,7 @@ def teclado_confirmacion(cantidad: str, unidad: str) -> ReplyKeyboardMarkup:
 def teclado_jefa() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup([
         [KeyboardButton("🔴 Stock crítico"),     KeyboardButton("🛒 Lista de compras")],
+        [KeyboardButton("🚨 Críticos Umacollo"), KeyboardButton("🚨 Críticos Estados Unidos")],
         [KeyboardButton("📋 Estado General"),   KeyboardButton("📂 Por Categoría")],
         [KeyboardButton("🔍 Consultar producto"), KeyboardButton("📊 Resumen del día")],
         [KeyboardButton("📍 Por distribuidor"),  KeyboardButton("👤 Por trabajador")],
@@ -960,6 +961,21 @@ async def ver_stock_consulta(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
     return ELEGIR_PRODUCTO
 
+async def _enviar_mensajes_largos(update: Update, msg: str, reply_markup=None):
+    if len(msg) <= 4000:
+        await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=reply_markup)
+        return
+    partes = msg.split("\n\n")
+    actual = ""
+    for p in partes:
+        if len(actual) + len(p) > 4000:
+            await update.message.reply_text(actual.strip(), parse_mode="Markdown")
+            actual = p + "\n\n"
+        else:
+            actual += p + "\n\n"
+    if actual:
+        await update.message.reply_text(actual.strip(), parse_mode="Markdown", reply_markup=reply_markup)
+
 # ─── FLUJO JEFA ───────────────────────────────────────────────────────────────
 async def jefa_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = update.message.text
@@ -1000,10 +1016,7 @@ async def jefa_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 data = alertas[prod]
                 msg += f"📦 *{prod}* (Ideal: {data['ideal']})\n" + "\n".join(data["sedes"]) + "\n\n"
                     
-        await update.message.reply_text(
-            msg.strip() or "✅ Todo bien.", parse_mode="Markdown",
-            reply_markup=teclado_jefa()
-        )
+        await _enviar_mensajes_largos(update, msg.strip() or "✅ Todo bien.", reply_markup=teclado_jefa())
         return JEFA_MENU
 
     if texto == "🛒 Lista de compras":
@@ -1034,7 +1047,7 @@ async def jefa_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 msg += f"\n🚚 *{dist}*\n"
                 for prod, data in sorted(por_dist[dist].items()):
                     msg += f"  📦 *{prod}* (Ideal: {data['ideal']})\n" + "\n".join(data["sedes"]) + "\n"
-        await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=teclado_jefa())
+        await _enviar_mensajes_largos(update, msg, reply_markup=teclado_jefa())
         return JEFA_MENU
 
     if texto == "📋 Estado General":
@@ -1121,11 +1134,43 @@ async def jefa_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 for prod, sedes in sorted(por_dist[dist].items()):
                     msg += f"  📦 *{prod}*\n" + "\n".join(sedes) + "\n"
                     
-        if len(msg) > 4000:
-            await update.message.reply_text(msg[:4000], parse_mode="Markdown")
-            await update.message.reply_text("...(la lista es más larga)", parse_mode="Markdown", reply_markup=teclado_jefa())
+        await _enviar_mensajes_largos(update, msg, reply_markup=teclado_jefa())
+        return JEFA_MENU
+
+    if "Críticos" in texto and ("Umacollo" in texto or "Estados Unidos" in texto):
+        sede_label = "Umacollo" if "Umacollo" in texto else "Av. Estados Unidos"
+        sheet_id = SHEET_ID_UMACOLLO if sede_label == "Umacollo" else SHEET_ID_EU
+        
+        registros = obtener_stock_sede(sheet_id, sede_label)
+        alertas = []
+        for r in registros:
+            ideal = STOCK_IDEAL.get(r["producto"])
+            if not ideal: continue
+            try: cant = float(r["cantidad"].replace(',', '.'))
+            except Exception: continue
+            
+            if cant < ideal * 0.90:
+                emoji = "🔴" if cant < ideal * 0.50 else "🟡"
+                alertas.append({
+                    "prod": r["producto"],
+                    "cant": cant,
+                    "unidad": r["unidad"],
+                    "ideal": ideal,
+                    "emoji": emoji,
+                    "encargado": r["persona"]
+                })
+        
+        if not alertas:
+            msg = f"✅ Todo bien en {sede_label}."
         else:
-            await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=teclado_jefa())
+            msg = f"🚨 *Críticos {sede_label}:*\n\n"
+            for a in sorted(alertas, key=lambda x: x["prod"]):
+                extra = " ⚠️ (Crítico Diario)" if "jornada" in a["prod"].lower() or "pan" in a["prod"].lower() else ""
+                msg += f"{a['emoji']} *{a['prod']}*{extra}\n"
+                msg += f"  Stock: {a['cant']}/{a['ideal']} {a['unidad']}\n"
+                msg += f"  👤 Encargado: {a['encargado']}\n\n"
+                
+        await _enviar_mensajes_largos(update, msg, reply_markup=teclado_jefa())
         return JEFA_MENU
 
     if texto == "👤 Por trabajador":
@@ -1234,11 +1279,7 @@ async def jefa_categoria_elegir(update: Update, context: ContextTypes.DEFAULT_TY
         data = agrupado[prod]
         msg += f"📦 *{prod}* (🚚 Pedir a: {data['distribuidor']})\n" + "\n".join(data["sedes"]) + "\n\n"
         
-    if len(msg) > 4000:
-        await update.message.reply_text(msg[:4000], parse_mode="Markdown")
-        await update.message.reply_text("...(la lista es más larga, usa consultas específicas si necesitas más info)", reply_markup=teclado_jefa())
-    else:
-        await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=teclado_jefa())
+    await _enviar_mensajes_largos(update, msg, reply_markup=teclado_jefa())
     return JEFA_MENU
 
 async def admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
