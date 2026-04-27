@@ -651,12 +651,31 @@ def teclado_confirmacion(cantidad: str, unidad: str) -> ReplyKeyboardMarkup:
 
 def teclado_jefa() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup([
+        [KeyboardButton("📦 Módulo Adquisiciones")],
+        [KeyboardButton("👥 Módulo Personal")],
+        [KeyboardButton("💰 Módulo Finanzas")]
+    ], resize_keyboard=True)
+
+def teclado_jefa_adquisiciones() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup([
         [KeyboardButton("🔴 Stock crítico"),     KeyboardButton("🛒 Lista de compras")],
         [KeyboardButton("🚨 Críticos Umacollo"), KeyboardButton("🚨 Críticos Estados Unidos")],
-        [KeyboardButton("📋 Estado General"),   KeyboardButton("📂 Por Categoría")],
-        [KeyboardButton("🔍 Consultar producto"), KeyboardButton("📊 Resumen del día")],
-        [KeyboardButton("📍 Por distribuidor"),  KeyboardButton("👤 Por trabajador")],
-        [KeyboardButton("🍽️ Histórico Consumos")],
+        [KeyboardButton("📂 Por Categoría"),     KeyboardButton("📍 Por distribuidor")],
+        [KeyboardButton("🔍 Consultar producto"), KeyboardButton("📱 Generador WhatsApp")],
+        [KeyboardButton("⬅️ Volver al Menú Principal")],
+    ], resize_keyboard=True)
+
+def teclado_jefa_personal() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup([
+        [KeyboardButton("📋 Estado General"),   KeyboardButton("📊 Resumen del día")],
+        [KeyboardButton("👤 Por trabajador"),  KeyboardButton("🍽️ Histórico Consumos")],
+        [KeyboardButton("⬅️ Volver al Menú Principal")],
+    ], resize_keyboard=True)
+
+def teclado_jefa_finanzas() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup([
+        [KeyboardButton("💰 Ver Cuadres de Caja")],
+        [KeyboardButton("⬅️ Volver al Menú Principal")],
     ], resize_keyboard=True)
 
 # ─── FLUJO DE REGISTRO ────────────────────────────────────────────────────────
@@ -900,8 +919,32 @@ async def confirmar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return INGRESAR_CANTIDAD
 
     if "Confirmar" in texto:
+        # Option C: Alerta Merma
+        sheet_id_sede = SHEET_ID_UMACOLLO if sede == "Umacollo" else SHEET_ID_EU
+        if sheet_id_sede:
+            registros_anteriores = obtener_stock_sede(sheet_id_sede, sede, prod_obj["nombre"])
+            reg_ant = next((r for r in registros_anteriores if r["producto"] == prod_obj["nombre"]), None)
+            alerta_merma = ""
+            if reg_ant:
+                try:
+                    cant_ant = float(reg_ant["cantidad"].replace(',', '.'))
+                    if cantidad < cant_ant:
+                        diff = cant_ant - cantidad
+                        ideal = STOCK_IDEAL.get(prod_obj["nombre"], 1)
+                        if diff >= ideal * 0.20:
+                            alerta_merma = f"⚠️ *ALERTA DE MERMA/CONSUMO ALTO*\n📍 {sede}\n👤 {nombre} reportó *{prod_obj['nombre']}*\n📉 Bajó de {cant_ant} a {cantidad} (-{round(diff,2)} {prod_obj['unidad']}).\n_Verifica si cuadra con las ventas o consumos._"
+                except Exception:
+                    pass
+
         ok, err = registrar_stock(nombre, prod_obj["nombre"], cantidad,
                                   prod_obj["unidad"], prod_obj["distribuidor"], sede)
+                                  
+        if ok and alerta_merma:
+            try:
+                import asyncio
+                context.bot.send_message(chat_id="1427645515", text=alerta_merma, parse_mode="Markdown")
+            except Exception:
+                pass
 
         # Marcar como reportado
         reportados.add(prod_obj["nombre"])
@@ -980,6 +1023,76 @@ async def _enviar_mensajes_largos(update: Update, msg: str, reply_markup=None):
 async def jefa_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = update.message.text
 
+    if texto == "⬅️ Volver al Menú Principal":
+        await update.message.reply_text("📱 *Menú Principal 360°*\nElige un módulo:", parse_mode="Markdown", reply_markup=teclado_jefa_adquisiciones())
+        return JEFA_MENU
+
+    if texto == "📦 Módulo Adquisiciones":
+        await update.message.reply_text("📦 *Módulo Adquisiciones*\nSelecciona una opción logística:", parse_mode="Markdown", reply_markup=teclado_jefa_adquisiciones())
+        return JEFA_MENU
+
+    if texto == "👥 Módulo Personal":
+        await update.message.reply_text("👥 *Módulo Personal*\nSelecciona una opción de supervisión:", parse_mode="Markdown", reply_markup=teclado_jefa_personal())
+        return JEFA_MENU
+
+    if texto == "💰 Módulo Finanzas":
+        await update.message.reply_text("💰 *Módulo Finanzas*\nSelecciona una opción contable:", parse_mode="Markdown", reply_markup=teclado_jefa_finanzas())
+        return JEFA_MENU
+
+
+    if texto == "📱 Generador WhatsApp":
+        registros = obtener_stock_combinado()
+        por_dist = {}
+        for r in registros:
+            ideal = STOCK_IDEAL.get(r["producto"])
+            if not ideal: continue
+            try: cant = float(r["cantidad"].replace(',', '.'))
+            except Exception: continue
+            if cant < ideal * 0.90:
+                dist = r["distribuidor"]
+                prod = r["producto"]
+                falta = round(ideal - cant, 2)
+                if dist not in por_dist: por_dist[dist] = {}
+                if r['sede'] not in por_dist[dist]: por_dist[dist][r['sede']] = []
+                por_dist[dist][r['sede']].append(f"- {falta} {r['unidad']} de {prod}")
+                
+        if not por_dist:
+            await update.message.reply_text("✅ No hay nada urgente que pedir.", reply_markup=teclado_jefa_adquisiciones())
+            return JEFA_MENU
+            
+        await update.message.reply_text("🪄 *Generador Mágico de Pedidos*\nToca los bloques de código para copiarlos y enviarlos directo por WhatsApp:", parse_mode="Markdown")
+        
+        for dist, sedes in por_dist.items():
+            msg = f"Hola {dist}, por favor envíanos este pedido:\n\n"
+            for sede_name, items in sedes.items():
+                msg += f"📍 Para {sede_name}:\n" + "\n".join(items) + "\n\n"
+            msg += "¡Gracias!"
+            await update.message.reply_text(f"```text\n{msg}\n```", parse_mode="Markdown")
+            
+        await update.message.reply_text("✅ Listo. (Usa los botones 👇)", reply_markup=teclado_jefa_adquisiciones())
+        return JEFA_MENU
+
+    if texto == "💰 Ver Cuadres de Caja":
+        msg = "💰 *Últimos Cuadres de Caja (Hoy)*\n\n"
+        hoy = get_now().strftime("%d/%m/%Y")
+        for sede_label, sheet_id in [("Umacollo", SHEET_ID_UMACOLLO), ("Av. Estados Unidos", SHEET_ID_EU)]:
+            if not sheet_id: continue
+            try:
+                ws = get_sheet(sheet_id).worksheet("Caja")
+                datos = ws.get_all_values()
+                hoy_caja = [f for f in datos[1:] if f[0] == hoy]
+                if hoy_caja:
+                    msg += f"📍 *{sede_label}*\n"
+                    for f in hoy_caja:
+                        msg += f"  • {f[2]} ({f[4]}): S/ {f[5]} a las {f[1]}\n"
+                    msg += "\n"
+            except Exception:
+                pass
+        if msg == "💰 *Últimos Cuadres de Caja (Hoy)*\n\n":
+            msg = "✅ No se han registrado cuadres de caja hoy."
+        await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=teclado_jefa_finanzas())
+        return JEFA_MENU
+
     if texto == "🔍 Consultar producto":
         await update.message.reply_text(
             "¿Qué producto quieres ver?\nEscribe el nombre:",
@@ -1016,7 +1129,7 @@ async def jefa_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 data = alertas[prod]
                 msg += f"📦 *{prod}* (Ideal: {data['ideal']})\n" + "\n".join(data["sedes"]) + "\n\n"
                     
-        await _enviar_mensajes_largos(update, msg.strip() or "✅ Todo bien.", reply_markup=teclado_jefa())
+        await _enviar_mensajes_largos(update, msg.strip() or "✅ Todo bien.", reply_markup=teclado_jefa_adquisiciones())
         return JEFA_MENU
 
     if texto == "🛒 Lista de compras":
@@ -1047,7 +1160,7 @@ async def jefa_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 msg += f"\n🚚 *{dist}*\n"
                 for prod, data in sorted(por_dist[dist].items()):
                     msg += f"  📦 *{prod}* (Ideal: {data['ideal']})\n" + "\n".join(data["sedes"]) + "\n"
-        await _enviar_mensajes_largos(update, msg, reply_markup=teclado_jefa())
+        await _enviar_mensajes_largos(update, msg, reply_markup=teclado_jefa_adquisiciones())
         return JEFA_MENU
 
     if texto == "📋 Estado General":
@@ -1070,9 +1183,9 @@ async def jefa_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             m1 = "\n\n".join(partes[:mitad])
             m2 = "\n\n".join(partes[mitad:])
             await update.message.reply_text(m1, parse_mode="Markdown")
-            await update.message.reply_text(m2, parse_mode="Markdown", reply_markup=teclado_jefa())
+            await update.message.reply_text(m2, parse_mode="Markdown", reply_markup=teclado_jefa_personal())
         else:
-            await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=teclado_jefa())
+            await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=teclado_jefa_personal())
         return JEFA_MENU
 
     if texto == "📂 Por Categoría":
@@ -1086,7 +1199,7 @@ async def jefa_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if texto == "🍽️ Histórico Consumos":
         msg = obtener_consumos_semanales()
-        await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=teclado_jefa())
+        await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=teclado_jefa_adquisiciones())
         return JEFA_MENU
 
     if texto == "📊 Resumen del día":
@@ -1109,7 +1222,7 @@ async def jefa_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 msg += "  Sin reportes hoy\n"
 
-        await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=teclado_jefa())
+        await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=teclado_jefa_personal())
         return JEFA_MENU
 
     if texto == "📍 Por distribuidor":
@@ -1134,7 +1247,7 @@ async def jefa_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 for prod, sedes in sorted(por_dist[dist].items()):
                     msg += f"  📦 *{prod}*\n" + "\n".join(sedes) + "\n"
                     
-        await _enviar_mensajes_largos(update, msg, reply_markup=teclado_jefa())
+        await _enviar_mensajes_largos(update, msg, reply_markup=teclado_jefa_adquisiciones())
         return JEFA_MENU
 
     if "Críticos" in texto and ("Umacollo" in texto or "Estados Unidos" in texto):
@@ -1170,7 +1283,7 @@ async def jefa_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 msg += f"  Stock: {a['cant']}/{a['ideal']} {a['unidad']}\n"
                 msg += f"  👤 Encargado: {a['encargado']}\n\n"
                 
-        await _enviar_mensajes_largos(update, msg, reply_markup=teclado_jefa())
+        await _enviar_mensajes_largos(update, msg, reply_markup=teclado_jefa_adquisiciones())
         return JEFA_MENU
 
     if texto == "👤 Por trabajador":
@@ -1184,7 +1297,7 @@ async def jefa_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return JEFA_TRABAJADOR
 
-    await update.message.reply_text("Usa los botones 👇", reply_markup=teclado_jefa())
+    await update.message.reply_text("Usa los botones 👇", reply_markup=teclado_jefa_adquisiciones())
     return JEFA_MENU
 
 async def jefa_trabajador(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1198,7 +1311,7 @@ async def jefa_trabajador(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sheet_id = SHEET_ID_UMACOLLO if sede_label == "Umacollo" else SHEET_ID_EU
 
     if not sheet_id:
-        await update.message.reply_text("❌ No hay Sheet configurado para esa sede.", reply_markup=teclado_jefa())
+        await update.message.reply_text("❌ No hay Sheet configurado para esa sede.", reply_markup=teclado_jefa_adquisiciones())
         return JEFA_MENU
 
     registros = obtener_stock_sede(sheet_id, sede_label)
@@ -1207,7 +1320,7 @@ async def jefa_trabajador(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not trabajador_regs:
         await update.message.reply_text(
             f"❌ *{trabajador}* no tiene ningún producto reportado recientemente.",
-            parse_mode="Markdown", reply_markup=teclado_jefa()
+            parse_mode="Markdown", reply_markup=teclado_jefa_adquisiciones()
         )
         return JEFA_MENU
 
@@ -1217,7 +1330,7 @@ async def jefa_trabajador(update: Update, context: ContextTypes.DEFAULT_TYPE):
         emoji, ideal_txt = _estado_emoji(r["cantidad"], ideal)
         msg += f"  {emoji} {r['producto']}: {r['cantidad']} {r['unidad']}{ideal_txt}\n    _({r['fecha']} a las {r['hora']})_\n\n"
 
-    await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=teclado_jefa())
+    await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=teclado_jefa_adquisiciones())
     return JEFA_MENU
 
 async def jefa_consulta(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1229,7 +1342,7 @@ async def jefa_consulta(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not r_uma and not r_eu:
         await update.message.reply_text(
             f'❌ No encontré "{busqueda}". Revisa cómo está escrito.',
-            reply_markup=teclado_jefa()
+            reply_markup=teclado_jefa_adquisiciones()
         )
         return JEFA_MENU
 
@@ -1252,7 +1365,7 @@ async def jefa_consulta(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg += "\n"
 
     await update.message.reply_text(
-        msg.strip(), parse_mode="Markdown", reply_markup=teclado_jefa()
+        msg.strip(), parse_mode="Markdown", reply_markup=teclado_jefa_adquisiciones()
     )
     return JEFA_MENU
 
@@ -1271,7 +1384,7 @@ async def jefa_categoria_elegir(update: Update, context: ContextTypes.DEFAULT_TY
             agrupado[prod]["sedes"].append(f"    {emoji} 📍 {r['sede']}: {r['cantidad']} {r['unidad']}")
             
     if not agrupado:
-        await update.message.reply_text(f"❌ No hay productos en la categoría: *{cat_elegida}*", parse_mode="Markdown", reply_markup=teclado_jefa())
+        await update.message.reply_text(f"❌ No hay productos en la categoría: *{cat_elegida}*", parse_mode="Markdown", reply_markup=teclado_jefa_adquisiciones())
         return JEFA_MENU
         
     msg = f"📂 *Categoría: {cat_elegida}*\n\n"
@@ -1279,7 +1392,7 @@ async def jefa_categoria_elegir(update: Update, context: ContextTypes.DEFAULT_TY
         data = agrupado[prod]
         msg += f"📦 *{prod}* (🚚 Pedir a: {data['distribuidor']})\n" + "\n".join(data["sedes"]) + "\n\n"
         
-    await _enviar_mensajes_largos(update, msg, reply_markup=teclado_jefa())
+    await _enviar_mensajes_largos(update, msg, reply_markup=teclado_jefa_adquisiciones())
     return JEFA_MENU
 
 async def admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
