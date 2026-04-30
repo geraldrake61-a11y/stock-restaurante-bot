@@ -273,6 +273,7 @@ PRODUCTOS = {
         {"nombre": "Gallinas llegada",   "unidad": "unidades",      "distribuidor": "Avelino"},
         {"nombre": "Pollos llegada",     "unidad": "unidades",      "distribuidor": "Avelino"},
         {"nombre": "Gallinas congeladas","unidad": "unidades",      "distribuidor": "Avelino"},
+
         {"nombre": "Pollos congelados",  "unidad": "unidades",      "distribuidor": "Avelino"},
     ],
     "Flor": [
@@ -640,6 +641,10 @@ def teclado_productos(nombre: str, reportados: set = None) -> ReplyKeyboardMarku
     if nombre in ["Ivan", "Josué", "Josue"]:
         filas.append([KeyboardButton("🍽️ Consumos personal")])
 
+    # Botón exclusivo para Carlos: consultar gallinas congeladas de Umacollo (reportadas por Milagros)
+    if nombre == "Carlos":
+        filas.append([KeyboardButton("🧊 Gallinas congeladas Umacollo")])
+
     filas.append([KeyboardButton("📊 Ver stock"), KeyboardButton("✅ Terminé por hoy")])
     return ReplyKeyboardMarkup(filas, resize_keyboard=True)
 
@@ -813,7 +818,6 @@ async def elegir_producto(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown",
                 reply_markup=teclado_productos(nombre, reportados)
             )
-            # Marcar que ya se advirtió para no repetir el aviso
             context.user_data["advertido"] = True
             return ELEGIR_PRODUCTO
 
@@ -832,6 +836,28 @@ async def elegir_producto(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=ReplyKeyboardRemove()
         )
         return VER_STOCK
+
+    # ── Botón exclusivo de Carlos: ver Gallinas congeladas reportadas por Milagros ──
+    if nombre == "Carlos" and texto == "🧊 Gallinas congeladas Umacollo":
+        registros = obtener_stock_sede(SHEET_ID_UMACOLLO, "Umacollo", "Gallinas congeladas")
+        registros_milagros = [r for r in registros if r.get("persona") == "Milagros"]
+        if registros_milagros:
+            r = registros_milagros[0]  # el más reciente
+            ideal = STOCK_IDEAL.get(r["producto"])
+            emoji, ideal_txt = _estado_emoji(r["cantidad"], ideal)
+            msg = (
+                f"🧊 *Gallinas congeladas — Umacollo*\n\n"
+                f"{emoji} *{r['cantidad']} {r['unidad']}*{ideal_txt}\n"
+                f"📅 {r['fecha']}  🕐 {r['hora']}\n"
+                f"👤 Reportado por: {r['persona']}"
+            )
+        else:
+            msg = "❌ Milagros aún no ha reportado Gallinas congeladas."
+        await update.message.reply_text(
+            msg, parse_mode="Markdown",
+            reply_markup=teclado_productos(nombre, reportados)
+        )
+        return ELEGIR_PRODUCTO
 
     if "Monto inicial" in texto or "Monto final" in texto:
         context.user_data["caja_tipo"] = "Inicial" if "inicial" in texto.lower() else "Final"
@@ -979,7 +1005,7 @@ async def ver_stock_consulta(update: Update, context: ContextTypes.DEFAULT_TYPE)
     reportados = context.user_data.get("reportados", set())
     sede       = context.user_data.get("sede")
     if sede:
-        sheet_id  = SHEET_ID_EU if sede == "Av. Estados Unidos" else SHEET_ID_UMACOLLO
+        sheet_id = SHEET_ID_EU if sede == "Av. Estados Unidos" else SHEET_ID_UMACOLLO
         registros = obtener_stock_sede(sheet_id, sede, busqueda)
     else:
         registros = obtener_stock_combinado(busqueda)
