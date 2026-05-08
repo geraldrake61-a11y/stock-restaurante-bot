@@ -45,6 +45,7 @@ CONSUMOS_TIPO     = 12
 CONSUMOS_PERSONAL = 13
 CONSUMOS_MONTO    = 14
 JEFA_CATEGORIA_ELEGIR = 15
+JEFA_INCIDENCIAS      = 16
 
 # ─── PERSISTENCIA DE USUARIOS EN GOOGLE SHEETS ────────────────────────────────
 USUARIOS_FILE  = "usuarios_registrados.json"   # caché local de respaldo
@@ -641,9 +642,12 @@ def teclado_productos(nombre: str, reportados: set = None) -> ReplyKeyboardMarku
     if nombre in ["Ivan", "Josué", "Josue"]:
         filas.append([KeyboardButton("🍽️ Consumos personal")])
 
-    # Botón exclusivo para Carlos: consultar gallinas congeladas de Umacollo (reportadas por Milagros)
+    # Botones exclusivos para Carlos: consultar stock de Umacollo (reportado por Milagros)
     if nombre == "Carlos":
-        filas.append([KeyboardButton("🧊 Gallinas congeladas Umacollo")])
+        filas.append([
+            KeyboardButton("🧊 Gallinas congeladas Umacollo"),
+            KeyboardButton("🐔 Pollos congelados Umacollo"),
+        ])
 
     filas.append([KeyboardButton("📊 Ver stock"), KeyboardButton("✅ Terminé por hoy")])
     return ReplyKeyboardMarkup(filas, resize_keyboard=True)
@@ -673,7 +677,8 @@ def teclado_jefa_adquisiciones() -> ReplyKeyboardMarkup:
 def teclado_jefa_personal() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup([
         [KeyboardButton("📋 Estado General"),   KeyboardButton("📊 Resumen del día")],
-        [KeyboardButton("👤 Por trabajador"),  KeyboardButton("🍽️ Histórico Consumos")],
+        [KeyboardButton("👤 Por trabajador"),   KeyboardButton("🍽️ Histórico Consumos")],
+        [KeyboardButton("📝 Incidencias")],
         [KeyboardButton("⬅️ Volver al Menú Principal")],
     ], resize_keyboard=True)
 
@@ -837,22 +842,29 @@ async def elegir_producto(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return VER_STOCK
 
-    # ── Botón exclusivo de Carlos: ver Gallinas congeladas reportadas por Milagros ──
-    if nombre == "Carlos" and texto == "🧊 Gallinas congeladas Umacollo":
-        registros = obtener_stock_sede(SHEET_ID_UMACOLLO, "Umacollo", "Gallinas congeladas")
+    # ── Botones exclusivos de Carlos: ver stock de Umacollo reportado por Milagros ──
+    if nombre == "Carlos" and texto in ("🧊 Gallinas congeladas Umacollo", "🐔 Pollos congelados Umacollo"):
+        if texto == "🧊 Gallinas congeladas Umacollo":
+            buscar = "Gallinas congeladas"
+            titulo = "🧊 Gallinas congeladas — Umacollo"
+        else:
+            buscar = "Pollos congelados"
+            titulo = "🐔 Pollos congelados — Umacollo"
+
+        registros = obtener_stock_sede(SHEET_ID_UMACOLLO, "Umacollo", buscar)
         registros_milagros = [r for r in registros if r.get("persona") == "Milagros"]
         if registros_milagros:
-            r = registros_milagros[0]  # el más reciente
+            r = registros_milagros[0]
             ideal = STOCK_IDEAL.get(r["producto"])
             emoji, ideal_txt = _estado_emoji(r["cantidad"], ideal)
             msg = (
-                f"🧊 *Gallinas congeladas — Umacollo*\n\n"
+                f"*{titulo}*\n\n"
                 f"{emoji} *{r['cantidad']} {r['unidad']}*{ideal_txt}\n"
                 f"📅 {r['fecha']}  🕐 {r['hora']}\n"
                 f"👤 Reportado por: {r['persona']}"
             )
         else:
-            msg = "❌ Milagros aún no ha reportado Gallinas congeladas."
+            msg = f"❌ Milagros aún no ha reportado {buscar}."
         await update.message.reply_text(
             msg, parse_mode="Markdown",
             reply_markup=teclado_productos(nombre, reportados)
@@ -1276,6 +1288,19 @@ async def jefa_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _enviar_mensajes_largos(update, msg, reply_markup=teclado_jefa_adquisiciones())
         return JEFA_MENU
 
+    if texto == "📝 Incidencias":
+        # Cargar incidencias desde Google Sheets
+        incidencias = _cargar_incidencias()
+        if not incidencias:
+            msg = "📝 *Incidencias del mes*\n\n_No hay incidencias registradas aún._\n\nEscribe una nueva incidencia o envía /cancelar para salir:"
+        else:
+            msg = "📝 *Incidencias registradas:*\n\n"
+            for idx, inc in enumerate(incidencias, 1):
+                msg += f"{idx}. [{inc['fecha']}] {inc['texto']}\n"
+            msg += "\n_Escribe una nueva incidencia para agregar, o envía /cancelar para salir._"
+        await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=ReplyKeyboardRemove())
+        return JEFA_INCIDENCIAS
+
     if "Críticos" in texto and ("Umacollo" in texto or "Estados Unidos" in texto):
         sede_label = "Umacollo" if "Umacollo" in texto else "Av. Estados Unidos"
         sheet_id = SHEET_ID_UMACOLLO if sede_label == "Umacollo" else SHEET_ID_EU
@@ -1420,6 +1445,59 @@ async def jefa_categoria_elegir(update: Update, context: ContextTypes.DEFAULT_TY
         
     await _enviar_mensajes_largos(update, msg, reply_markup=teclado_jefa_adquisiciones())
     return JEFA_MENU
+
+async def jefa_incidencias(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    texto = update.message.text.strip()
+    ahora = get_now()
+    nueva = {"fecha": ahora.strftime("%d/%m/%Y"), "hora": ahora.strftime("%H:%M"), "texto": texto}
+    _guardar_incidencia(nueva)
+    incidencias = _cargar_incidencias()
+    msg = f"✅ Incidencia guardada.\n\n📝 *Total registradas este mes: {len(incidencias)}*\n"
+    for idx, inc in enumerate(incidencias, 1):
+        msg += f"{idx}. [{inc['fecha']}] {inc['texto']}\n"
+    msg += "\n_Escribe otra incidencia o ve al menú con /inicio._"
+    await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=teclado_jefa_personal())
+    return JEFA_MENU
+
+def _cargar_incidencias() -> list:
+    """Carga incidencias del mes actual desde Google Sheet (pestaña Incidencias)."""
+    ahora = get_now()
+    mes_actual = ahora.strftime("%m/%Y")
+    try:
+        for sheet_id in [SHEET_ID_UMACOLLO, SHEET_ID_EU]:
+            if not sheet_id: continue
+            ss = get_sheet(sheet_id)
+            try:
+                ws = ss.worksheet("Incidencias")
+            except Exception:
+                ws = ss.add_worksheet("Incidencias", rows=500, cols=4)
+                ws.append_row(["Fecha", "Hora", "Mes", "Incidencia"])
+            datos = ws.get_all_values()
+            return [
+                {"fecha": f[0], "hora": f[1], "texto": f[3]}
+                for f in datos[1:]
+                if len(f) >= 4 and f[2] == mes_actual
+            ]
+    except Exception as e:
+        logger.error(f"Error cargando incidencias: {e}")
+    return []
+
+def _guardar_incidencia(incidencia: dict):
+    """Guarda una incidencia en la pestaña Incidencias del Sheet de Umacollo."""
+    ahora = get_now()
+    mes_actual = ahora.strftime("%m/%Y")
+    try:
+        for sheet_id in [SHEET_ID_UMACOLLO]:
+            if not sheet_id: return
+            ss = get_sheet(sheet_id)
+            try:
+                ws = ss.worksheet("Incidencias")
+            except Exception:
+                ws = ss.add_worksheet("Incidencias", rows=500, cols=4)
+                ws.append_row(["Fecha", "Hora", "Mes", "Incidencia"])
+            ws.append_row([incidencia["fecha"], incidencia["hora"], mes_actual, incidencia["texto"]])
+    except Exception as e:
+        logger.error(f"Error guardando incidencia: {e}")
 
 async def admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = update.message.text
@@ -1591,6 +1669,7 @@ def main():
             CONSUMOS_PERSONAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, consumos_personal)],
             CONSUMOS_MONTO:    [MessageHandler(filters.TEXT & ~filters.COMMAND, consumos_monto)],
             JEFA_CATEGORIA_ELEGIR: [MessageHandler(filters.TEXT & ~filters.COMMAND, jefa_categoria_elegir)],
+            JEFA_INCIDENCIAS:      [MessageHandler(filters.TEXT & ~filters.COMMAND, jefa_incidencias)],
         },
         fallbacks=[CommandHandler("cancelar", cancelar)],
         allow_reentry=True,
